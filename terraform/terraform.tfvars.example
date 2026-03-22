@@ -1,0 +1,12 @@
+# Copy this file to terraform.tfvars and fill in your values
+# Do NOT commit terraform.tfvars — it may contain environment-specific details
+
+aws_region  = "us-east-1"
+environment = "prod"
+
+# DynamoDB
+dynamodb_table_name = "slack-kiro-sessions"
+
+# CloudWatch
+cloudwatch_log_group_name     = "/chatops-ai-agent/app"
+cloudwatch_log_retention_days = 90
