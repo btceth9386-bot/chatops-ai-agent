@@ -8,7 +8,7 @@ This plan implements the ChatOps AI Agent in three phases: (1) Core Slack Bot & 
 
 - [ ] 1. Set up project structure, shared types, and configuration
   - [ ] 1.1 Create directory structure and initialize TypeScript project
-    - Create `src/` directory tree as specified in design: `slack-bot/`, `acp/`, `mcp-servers/`, `cronjobs/`, `config/`, `logging/`, `types/`
+    - Create `src/` directory tree as specified in design: `slack-bot/`, `acp/`, `cronjobs/`, `config/`, `logging/`, `types/`
     - Initialize `package.json` with dependencies: `@slack/bolt`, `@aws-sdk/client-dynamodb`, `@aws-sdk/client-cloudwatch-logs`, `node-cron`
     - Configure `tsconfig.json` with strict mode
     - _Requirements: 1.6, 4.1_
@@ -25,8 +25,8 @@ This plan implements the ChatOps AI Agent in three phases: (1) Core Slack Bot & 
 
   - [ ] 1.4 Create default configuration files
     - Create `src/config/channels.json` with channel allowlist structure (learning, auto_investigation, mention_based modes, responseMode per channel)
-    - Create `src/config/mcp-services.json` with logs and GitHub allowlist structure
-    - _Requirements: 13.1–13.3, 14a.5_
+    - Create `mcp-config.example.json` at project root as a template for `~/.kiro/settings/mcp.json` with placeholder values for all MCP server registrations
+    - _Requirements: 13.1, 14a.5_
 
   - [ ]* 1.5 Write unit tests for Configuration Manager
     - Test load, validate, hot-reload, and invalid config fallback
@@ -148,31 +148,12 @@ This plan implements the ChatOps AI Agent in three phases: (1) Core Slack Bot & 
     - Test chunk buffering, flush interval, tool update rendering, finalize behavior, retry logic
     - _Requirements: 10.1–10.10_
 
-- [ ] 7. Implement MCP Server interfaces
-  - [ ] 7.1 Implement Logs MCP client (`src/mcp-servers/logs-mcp/`)
-    - Enforce service allowlist validation
-    - Limit query time windows to 30 days maximum
-    - Redact sensitive data patterns (IP, hostname, credential patterns)
-    - Return summarized results not exceeding 5000 characters
-    - Record all queries in Audit_Log
-    - _Requirements: 7.1–7.5_
-
-  - [ ] 7.2 Implement Grafana MCP client (`src/mcp-servers/grafana-mcp/`)
-    - Query dashboards and panels with time range and variables
-    - Return summary, metrics, and anomalies
-    - _Requirements: 5.3, 6.7_
-
-  - [ ] 7.3 Implement GitHub MCP client (`src/mcp-servers/github-mcp/`)
-    - Validate workflow name against allowlist
-    - Trigger GitHub Actions workflows
-    - Poll for completion with 5-second intervals
-    - Return status and summary on completion; return timeout status after 600 seconds
-    - Record all workflow triggers in Audit_Log
-    - _Requirements: 8.1–8.6_
-
-  - [ ]* 7.4 Write unit tests for MCP server clients
-    - Test allowlist enforcement, redaction patterns, time window limits, polling and timeout behavior
-    - _Requirements: 7.1–7.5, 8.1–8.6_
+- [ ] 7. Configure MCP Server registration
+  - [ ] 7.1 Create `mcp-config.example.json` with MCP server registration template
+    - Include all 6 MCP servers (opensearch-mcp-server-prod, grafana-amg, awslabs-eks-mcp-server, thanos-prod, github, awslabs-aws-documentation-mcp-server) with placeholder env vars
+    - Document that operators should copy this to `~/.kiro/settings/mcp.json` on the deployment machine and fill in environment-specific values
+    - Add `.kiro/settings/mcp.json` to `.gitignore` to prevent accidental commits of secrets
+    - _Requirements: 7.1, 8.1_
 
 - [ ] 8. Implement Error Handling and wire everything together
   - [ ] 8.1 Implement error handling across all components

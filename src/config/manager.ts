@@ -5,12 +5,10 @@ import { ChannelConfig } from '../types';
 
 export interface BotConfigFiles {
   channelsPath: string;
-  mcpServicesPath: string;
 }
 
 export interface LoadedConfig {
   channelAllowlist: ChannelConfig[];
-  mcpServices: Record<string, unknown>;
 }
 
 export class ConfigurationManager {
@@ -21,16 +19,10 @@ export class ConfigurationManager {
 
   async load(): Promise<LoadedConfig> {
     const channelsPath = resolve(this.files.channelsPath);
-    const mcpServicesPath = resolve(this.files.mcpServicesPath);
-
-    const [channelsRaw, mcpRaw] = await Promise.all([
-      readFile(channelsPath, 'utf-8'),
-      readFile(mcpServicesPath, 'utf-8'),
-    ]);
+    const channelsRaw = await readFile(channelsPath, 'utf-8');
 
     const parsed = {
       channelAllowlist: JSON.parse(channelsRaw) as ChannelConfig[],
-      mcpServices: JSON.parse(mcpRaw) as Record<string, unknown>,
     };
 
     this.validate(parsed);
@@ -54,29 +46,23 @@ export class ConfigurationManager {
         throw new Error(`invalid response mode for ${channel.channelId}`);
       }
     }
-
-    if (!config.mcpServices || typeof config.mcpServices !== 'object') {
-      throw new Error('mcpServices must be an object');
-    }
   }
 
   watch(onReload?: (config: LoadedConfig) => void): void {
     if (this.watching) return;
     this.watching = true;
 
-    const watchTargets = [this.files.channelsPath, this.files.mcpServicesPath].map((p) => resolve(p));
+    const target = resolve(this.files.channelsPath);
+    if (!existsSync(target)) return;
 
-    for (const target of watchTargets) {
-      if (!existsSync(target)) continue;
-      watch(target, async () => {
-        try {
-          const newConfig = await this.load();
-          onReload?.(newConfig);
-        } catch (error) {
-          console.error('[ConfigurationManager] invalid config change, keeping last valid config', error);
-        }
-      });
-    }
+    watch(target, async () => {
+      try {
+        const newConfig = await this.load();
+        onReload?.(newConfig);
+      } catch (error) {
+        console.error('[ConfigurationManager] invalid config change, keeping last valid config', error);
+      }
+    });
   }
 
   getLastValidConfig(): LoadedConfig | null {

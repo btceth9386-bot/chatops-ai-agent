@@ -8,21 +8,19 @@ describe('ConfigurationManager', () => {
   async function setupFiles() {
     const dir = await mkdtemp(join(tmpdir(), 'chatops-config-'));
     const channelsPath = join(dir, 'channels.json');
-    const mcpPath = join(dir, 'mcp-services.json');
 
     await writeFile(
       channelsPath,
       JSON.stringify([{ channelId: 'C1', mode: 'mention_based', responseMode: 'thread_reply' }]),
       'utf8'
     );
-    await writeFile(mcpPath, JSON.stringify({ logs: { allowedServices: ['a'] } }), 'utf8');
 
-    return { channelsPath, mcpPath };
+    return { channelsPath };
   }
 
   it('loads and validates config', async () => {
-    const { channelsPath, mcpPath } = await setupFiles();
-    const mgr = new ConfigurationManager({ channelsPath, mcpServicesPath: mcpPath });
+    const { channelsPath } = await setupFiles();
+    const mgr = new ConfigurationManager({ channelsPath });
     const loaded = await mgr.load();
 
     expect(loaded.channelAllowlist).toHaveLength(1);
@@ -30,16 +28,16 @@ describe('ConfigurationManager', () => {
   });
 
   it('rejects invalid channel mode', async () => {
-    const { channelsPath, mcpPath } = await setupFiles();
+    const { channelsPath } = await setupFiles();
     await writeFile(channelsPath, JSON.stringify([{ channelId: 'C1', mode: 'bad-mode' }]), 'utf8');
 
-    const mgr = new ConfigurationManager({ channelsPath, mcpServicesPath: mcpPath });
+    const mgr = new ConfigurationManager({ channelsPath });
     await expect(mgr.load()).rejects.toThrow('invalid channel mode');
   });
 
   it('retains last valid config after invalid reload attempt', async () => {
-    const { channelsPath, mcpPath } = await setupFiles();
-    const mgr = new ConfigurationManager({ channelsPath, mcpServicesPath: mcpPath });
+    const { channelsPath } = await setupFiles();
+    const mgr = new ConfigurationManager({ channelsPath });
 
     const first = await mgr.load();
     expect(first.channelAllowlist[0].channelId).toBe('C1');
@@ -52,8 +50,8 @@ describe('ConfigurationManager', () => {
   });
 
   it('hot-reloads valid updates via watch()', async () => {
-    const { channelsPath, mcpPath } = await setupFiles();
-    const mgr = new ConfigurationManager({ channelsPath, mcpServicesPath: mcpPath });
+    const { channelsPath } = await setupFiles();
+    const mgr = new ConfigurationManager({ channelsPath });
     await mgr.load();
 
     const reloaded = new Promise<boolean>((resolve) => {

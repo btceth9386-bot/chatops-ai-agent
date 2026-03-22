@@ -81,17 +81,25 @@ The system implements a continuous learning loop: session logs from investigatio
                          query│
                               │
 
-  MCP SERVERS (security boundary)
+  MCP SERVERS (security boundary — registered via ~/.kiro/settings/mcp.json)
   ────────────────────────────────────────────────────────────────
-             │                           │
-             ▼                           ▼
-  ┌────────────────┐  ┌────────────────┐  ┌────────────────────┐
-  │   Logs_MCP     │  │  Grafana_MCP   │  │    GitHub_MCP      │
-  │ - Allowlist    │  │ - Dashboards   │  │ - Workflow allow   │
-  │ - Redaction    │  │ - Metrics      │  │ - Poll completion  │
-  │ - Summarize    │  │ - Anomalies    │  │ - Timeout: 600s    │
-  └───────┬────────┘  └───────┬────────┘  └─────────┬──────────┘
-          │                   │                      │
+             │              │              │              │
+             ▼              ▼              ▼              ▼
+  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+  │ OpenSearch   │ │ Grafana AMG  │ │  EKS MCP     │ │ Thanos MCP   │
+  │ MCP (logs)   │ │ - Dashboards │ │ - Pods/Nodes │ │ - PromQL     │
+  │ - Read-only  │ │ - Metrics    │ │ - Events     │ │ - Alerts     │
+  │ - Allowlist  │ │ - Alerts     │ │ - Pod logs   │ │ - Read-only  │
+  │              │ │ - Read-only  │ │ - Read-only  │ │              │
+  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+         │                │                │                │
+         │     ┌──────────────────┐  ┌──────────────────┐   │
+         │     │   GitHub MCP     │  │  AWS Docs MCP    │   │
+         │     │ - Read + Write   │  │ - Read-only      │   │
+         │     │ - PRs, Actions   │  │ - Documentation  │   │
+         │     │ - Workflow allow  │  │                  │   │
+         │     └────────┬─────────┘  └────────┬─────────┘   │
+         │              │                     │              │
 
   SCHEDULED JOBS
   ────────────────────────────────────────────────────────────────
@@ -383,76 +391,137 @@ Rules:
 
 ### 3. MCP Servers
 
-MCP servers form the data security boundary. They enforce allowlists, redact sensitive data, and return summarized results.
+MCP servers are registered with `kiro-cli` and invoked by the ACP runtime — they are NOT part of the Node.js Slack Bot codebase. The Slack Bot never calls MCP servers directly; it sends prompts to the ACP process, and the agents inside the ACP process use MCP tools.
 
-#### Logs_MCP Interface
+#### Configuration Layers
 
-```typescript
-interface LogsQueryRequest {
-  service: string;                     // Must be in service allowlist
-  timeWindowStart: string;             // ISO 8601
-  timeWindowEnd: string;               // ISO 8601, max 30 days from start
-  query: string;                       // Search query
-  maxResults: number;
-}
+There are two distinct configuration layers:
 
-interface LogsQueryResponse {
-  summary: string;                     // Redacted, max 5000 chars
-  matchCount: number;
-  timeRange: { start: string; end: string };
-  queryId: string;                     // For audit trail
-}
+1. **Kiro MCP Server Registration** (`~/.kiro/settings/mcp.json` on the deployment machine)
+   - Registers MCP server processes with `kiro-cli` so agents can use their tools
+   - Contains environment-specific details: endpoints, credentials, connection settings
+   - NOT committed to the repo — operator configures this on the EC2 instance
+   - All sensitive values MUST use environment variable references (`${VAR_NAME}`), never hardcoded
+   - Example:
+   ```json
+   {
+     "mcpServers": {
+       "opensearch-mcp-server-prod": {
+         "command": "uvx",
+         "args": ["opensearch-mcp-server@latest"],
+         "env": {
+           "OPENSEARCH_URL": "${OPENSEARCH_URL}",
+           "AWS_OPENSEARCH_SERVERLESS": "false",
+           "OPENSEARCH_USERNAME": "${OPENSEARCH_USERNAME}",
+           "OPENSEARCH_PASSWORD": "${OPENSEARCH_PASSWORD}",
+           "AWS_REGION": "us-east-1"
+         },
+         "autoApprove": ["search", "list_indices", "get_mappings", "get_cluster_health", "get_cluster_info"],
+         "tools": ["search", "list_indices", "get_mappings", "get_cluster_health", "get_cluster_info"]
+       },
+       "grafana-amg": {
+         "command": "uvx",
+         "args": ["mcp-grafana"],
+         "env": {
+           "GRAFANA_URL": "${GRAFANA_URL}",
+           "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"
+         },
+         "autoApprove": ["search_dashboards", "get_dashboard_by_uid", "get_dashboard_summary", "list_datasources", "get_datasource_by_uid", "query_prometheus", "get_dashboard_annotations", "list_alert_rules", "get_alert_rule"],
+         "tools": ["search_dashboards", "get_dashboard_by_uid", "get_dashboard_summary", "list_datasources", "get_datasource_by_uid", "query_prometheus", "get_dashboard_annotations", "list_alert_rules", "get_alert_rule"]
+       },
+       "awslabs-eks-mcp-server": {
+         "command": "uvx",
+         "args": ["awslabs.eks-mcp-server@latest", "--allow-sensitive-data-access"],
+         "env": { "AWS_PROFILE": "default" },
+         "autoApprove": ["get_cluster_details", "list_clusters", "list_pods", "list_namespaces", "list_deployments", "list_services", "list_nodes", "describe_pod", "describe_deployment", "describe_service", "describe_node", "get_pod_logs", "get_events"],
+         "tools": ["get_cluster_details", "list_clusters", "list_pods", "list_namespaces", "list_deployments", "list_services", "list_nodes", "describe_pod", "describe_deployment", "describe_service", "describe_node", "get_pod_logs", "get_events"]
+       },
+       "thanos-prod": {
+         "type": "stdio",
+         "command": "uvx",
+         "args": ["prometheus-mcp-server"],
+         "env": { "PROMETHEUS_URL": "${PROMETHEUS_URL}" },
+         "autoApprove": ["execute_query", "execute_range_query", "get_metric_metadata", "list_metrics", "get_targets", "get_rules", "get_alerts"]
+       },
+       "github": {
+         "command": "/usr/local/bin/github-mcp-server",
+         "args": ["stdio"],
+         "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" },
+         "autoApprove": ["get_file_contents", "search_code", "search_issues", "search_pull_requests", "create_pull_request", "create_branch", "push_files", "merge_pull_request", "add_issue_comment"]
+       },
+       "awslabs-aws-documentation-mcp-server": {
+         "command": "uvx",
+         "args": ["awslabs.aws-documentation-mcp-server@latest"],
+         "env": { "FASTMCP_LOG_LEVEL": "ERROR", "AWS_DOCUMENTATION_PARTITION": "aws" },
+         "autoApprove": ["search_documentation", "get_documentation", "recommend"]
+       }
+     }
+   }
+   ```
 
-interface LogsMCPConfig {
-  serviceAllowlist: string[];
-  maxTimeWindowDays: number;           // Default: 30
-  maxResponseChars: number;            // Default: 5000
-  redactionPatterns: RegExp[];         // IP, hostname, credential patterns
-}
-```
+   #### MCP Server Permission Model
 
-#### Grafana_MCP Interface
+   | MCP Server | Permission | Rationale |
+   |---|---|---|
+   | opensearch-mcp-server-prod | Read-only | Log queries only — no index mutations |
+   | grafana-amg | Read-only | Dashboard/metric queries — no dashboard edits |
+   | awslabs-eks-mcp-server | Read-only | Cluster inspection — no kubectl apply/delete |
+   | thanos-prod | Read-only | PromQL queries — no rule/alert mutations |
+   | github | Read + Write | Must create PRs, push files, merge for skill improvement workflow |
+   | awslabs-aws-documentation-mcp-server | Read-only | Reference documentation lookup |
 
-```typescript
-interface GrafanaQueryRequest {
-  dashboard: string;
-  panel: string;
-  timeRange: { from: string; to: string };
-  variables: Record<string, string>;
-}
+> **Public repo note:** The repo ships `mcp-config.example.json` as a template. Operators copy it to `~/.kiro/settings/mcp.json` and fill in their environment-specific values. The workspace-level `.kiro/settings/mcp.json` is NOT used because it would be committed to the public repo with internal details.
 
-interface GrafanaQueryResponse {
-  summary: string;
-  metrics: Array<{ name: string; value: number; unit: string }>;
-  anomalies: string[];
-  queryId: string;
-}
-```
+MCP servers form the data security boundary. They enforce allowlists, redact sensitive data, and return summarized results. Allowlist configuration (which indices, dashboards, clusters, workflows are accessible) is the responsibility of each MCP server's own configuration — not the Slack Bot.
 
-#### GitHub_MCP Interface
+#### Actual MCP Servers
 
-```typescript
-interface GitHubActionRequest {
-  workflowName: string;               // Must be in workflow allowlist
-  ref: string;                         // Branch/tag
-  inputs: Record<string, string>;
-}
+The system uses community and AWS-maintained MCP servers (not custom-built):
 
-interface GitHubActionResponse {
-  runId: number;
-  status: 'completed' | 'failed' | 'timeout' | 'cancelled';
-  conclusion: string;
-  summary: string;
-  durationSeconds: number;
-  queryId: string;
-}
+| Design Name | Actual MCP Server | Package | Purpose |
+|---|---|---|---|
+| Logs_MCP | opensearch-mcp-server-prod | `opensearch-mcp-server` | Log queries via OpenSearch |
+| Grafana_MCP | grafana-amg | `mcp-grafana` | Dashboard/metric queries via Grafana AMG |
+| — (new) | awslabs-eks-mcp-server | `awslabs.eks-mcp-server` | EKS cluster inspection (pods, deployments, logs) |
+| — (new) | thanos-prod | `prometheus-mcp-server` | PromQL queries against Thanos/Prometheus |
+| GitHub_MCP | github | `github-mcp-server` | GitHub Actions, PRs, code search |
+| — (new) | awslabs-aws-documentation-mcp-server | `awslabs.aws-documentation-mcp-server` | AWS documentation reference |
 
-interface GitHubMCPConfig {
-  workflowAllowlist: string[];
-  pollIntervalSeconds: number;         // Default: 5
-  timeoutSeconds: number;              // Default: 600
-}
-```
+#### OpenSearch MCP (Logs) — Read-Only
+
+Replaces the generic Logs_MCP concept. Queries OpenSearch indices for application and infrastructure logs.
+
+Allowed tools: `search`, `list_indices`, `get_mappings`, `get_cluster_health`, `get_cluster_info`
+
+#### Grafana AMG MCP — Read-Only
+
+Queries Grafana dashboards, datasources, and Prometheus metrics. Also retrieves alert rules and annotations.
+
+Allowed tools: `search_dashboards`, `get_dashboard_by_uid`, `get_dashboard_summary`, `list_datasources`, `get_datasource_by_uid`, `query_prometheus`, `get_dashboard_annotations`, `list_alert_rules`, `get_alert_rule`
+
+#### EKS MCP — Read-Only
+
+Inspects EKS cluster state: pods, deployments, services, nodes, events, and pod logs.
+
+Allowed tools: `get_cluster_details`, `list_clusters`, `list_pods`, `list_namespaces`, `list_deployments`, `list_services`, `list_nodes`, `describe_pod`, `describe_deployment`, `describe_service`, `describe_node`, `get_pod_logs`, `get_events`
+
+#### Thanos/Prometheus MCP — Read-Only
+
+Executes PromQL queries against Thanos for metrics, alerts, and recording rules.
+
+Allowed tools: `execute_query`, `execute_range_query`, `get_metric_metadata`, `list_metrics`, `get_targets`, `get_rules`, `get_alerts`
+
+#### GitHub MCP — Read + Write
+
+The only MCP server with write permissions. Required for the skill improvement workflow (creating PRs, pushing files, merging).
+
+Allowed tools: `get_file_contents`, `search_code`, `search_issues`, `search_pull_requests`, `create_pull_request`, `create_branch`, `push_files`, `merge_pull_request`, `add_issue_comment` (and others as needed)
+
+#### AWS Documentation MCP — Read-Only
+
+Reference tool for looking up AWS documentation during investigations.
+
+Allowed tools: `search_documentation`, `get_documentation`, `recommend`
 
 ### 4. Skill_Analysis_Cronjob
 
@@ -964,23 +1033,6 @@ interface AuditLogEntry {
 }
 ```
 
-#### MCP Service Allowlist (`config/mcp-services.json`)
-
-```json
-{
-  "logs": {
-    "allowedServices": ["api-gateway", "auth-service", "payment-service"],
-    "maxTimeWindowDays": 30,
-    "maxResponseChars": 5000
-  },
-  "github": {
-    "allowedWorkflows": ["validate-fix.yml", "smoke-test.yml"],
-    "pollIntervalSeconds": 5,
-    "timeoutSeconds": 600
-  }
-}
-```
-
 ### Directory Structure
 
 ```
@@ -997,21 +1049,17 @@ project-root/
 │   │   ├── session-store.ts        # DynamoDB session persistence + in-memory cache
 │   │   ├── agent-switch.ts         # senior ↔ architect switching within same session
 │   │   └── slack-stream-controller.ts # chunk aggregation + progress UI + final Slack output
-│   ├── mcp-servers/
-│   │   ├── logs-mcp/
-│   │   ├── grafana-mcp/
-│   │   └── github-mcp/
 │   ├── cronjobs/
 │   │   ├── skill-analysis.ts       # Skill_Analysis_Cronjob
 │   │   └── benchmark.ts            # Benchmark_Cronjob
 │   ├── config/
 │   │   ├── manager.ts              # Config loading & hot-reload
-│   │   ├── channels.json
-│   │   └── mcp-services.json
+│   │   └── channels.json           # Channel allowlist (committed)
 │   ├── logging/
 │   │   └── cloudwatch.ts           # CloudWatch logger
 │   └── types/
 │       └── index.ts                # Shared type definitions
+├── mcp-config.example.json         # Template for ~/.kiro/settings/mcp.json (operator fills in)
 ├── agents/
 │   ├── senior-agent/
 │   └── architect-agent/
@@ -1022,6 +1070,8 @@ project-root/
 │   └── monitoring-issue/
 └── ~/.kiro/logs/                   # Session logs (runtime)
 ```
+
+> **Note:** MCP server implementations (logs-mcp, grafana-mcp, github-mcp) are separate projects, not part of this repo. They are registered with `kiro-cli` via `~/.kiro/settings/mcp.json` on the deployment machine. The `mcp-config.example.json` in this repo provides a template.
 
 ### Runtime Execution Order
 

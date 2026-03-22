@@ -1,0 +1,51 @@
+{
+  "mcpServers": {
+    "opensearch-mcp-server-prod": {
+      "command": "npx",
+      "args": ["-y", "@your-org/opensearch-mcp-server"],
+      "env": {
+        "OPENSEARCH_ENDPOINT": "https://your-opensearch-endpoint",
+        "AWS_REGION": "us-west-2",
+        "AWS_PROFILE": "your-profile"
+      }
+    },
+    "grafana-amg": {
+      "command": "npx",
+      "args": ["-y", "@your-org/grafana-mcp-server"],
+      "env": {
+        "GRAFANA_URL": "https://your-grafana-url",
+        "GRAFANA_API_KEY": "${GRAFANA_API_KEY}"
+      }
+    },
+    "awslabs-eks-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@awslabs/eks-mcp-server"],
+      "env": {
+        "AWS_REGION": "us-west-2",
+        "AWS_PROFILE": "your-profile",
+        "EKS_CLUSTER_NAME": "your-cluster"
+      }
+    },
+    "thanos-prod": {
+      "command": "npx",
+      "args": ["-y", "@your-org/thanos-mcp-server"],
+      "env": {
+        "THANOS_QUERY_URL": "https://your-thanos-query-url"
+      }
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "awslabs-aws-documentation-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@awslabs/aws-documentation-mcp-server"],
+      "env": {
+        "AWS_REGION": "us-west-2"
+      }
+    }
+  }
+}
