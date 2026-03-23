@@ -2,6 +2,7 @@ import type { SlackEvent } from '../types';
 import { sanitizeInput } from './sanitizer';
 import type { RoutingLayer } from './routing';
 import type { CloudWatchLogger } from '../logging/cloudwatch';
+import type { SlackSessionRuntime } from './session-runtime';
 
 interface SlackEventLike {
   text?: string;
@@ -32,7 +33,8 @@ export function toSlackEvent(
 export async function handleSlackEvent(
   event: SlackEvent,
   routing: RoutingLayer,
-  logger: CloudWatchLogger
+  logger: CloudWatchLogger,
+  runtime?: SlackSessionRuntime
 ): Promise<void> {
   const decision = routing.decide(event);
 
@@ -61,6 +63,7 @@ export async function handleSlackEvent(
         threadTs: event.threadTs,
         userId: event.userId,
       });
+      await runtime?.enqueue(event, decision.channel!, 'escalation');
       return;
     case 'acp_prompt':
       await logger.logInfo('ACP prompt requested', {
@@ -69,7 +72,7 @@ export async function handleSlackEvent(
         threadTs: event.threadTs,
         userId: event.userId,
       });
+      await runtime?.enqueue(event, decision.channel!, 'prompt');
       return;
   }
 }
-

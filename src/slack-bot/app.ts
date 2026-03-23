@@ -4,6 +4,10 @@ import { ConfigurationManager } from '../config/manager';
 import { CloudWatchLogger } from '../logging/cloudwatch';
 import { toSlackEvent, handleSlackEvent } from './events';
 import { RoutingLayer } from './routing';
+import { createSessionStore } from '../sessions/store';
+import { AcpProcessManager } from '../acp/process-manager';
+import { SlackStreamController } from './stream-controller';
+import { SlackSessionRuntime } from './session-runtime';
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -29,9 +33,16 @@ export async function createSlackApp() {
     socketMode: true,
   });
 
+  const sessionStore = createSessionStore({
+    tableName: process.env.DYNAMODB_TABLE_NAME,
+  });
+  const acpManager = new AcpProcessManager();
+  const streamController = new SlackStreamController(app.client as any);
+  const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
+
   app.event('app_mention', async ({ event }) => {
     const slackEvent = toSlackEvent(event as any, 'app_mention', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));
-    await handleSlackEvent(slackEvent, routing, logger);
+    await handleSlackEvent(slackEvent, routing, logger, runtime);
   });
 
   app.event('message', async ({ event }) => {
@@ -44,14 +55,14 @@ export async function createSlackApp() {
     }
 
     const slackEvent = toSlackEvent(event as any, 'message', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));
-    await handleSlackEvent(slackEvent, routing, logger);
+    await handleSlackEvent(slackEvent, routing, logger, runtime);
   });
 
   app.error(async (error) => {
     await logger.logError('Bolt app error', error as Error, { component: 'slack-app' });
   });
 
-  return { app, configManager, logger, routing };
+  return { app, configManager, logger, routing, runtime, sessionStore, acpManager };
 }
 
 export async function startSlackApp(port = Number(process.env.PORT ?? 3000)) {

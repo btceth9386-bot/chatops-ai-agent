@@ -181,3 +181,22 @@ export interface SkillAnalysisResult {
     affectedSystems: string[];
   };
 }
+
+export interface AcpPromptPayload {
+  sessionId: string;
+  prompt: string;
+  agent: AgentName;
+  metadata: {
+    channelId: string;
+    threadTs: string;
+    userId: string;
+    requestKind: 'prompt' | 'escalation';
+  };
+}
+
+export interface AcpEvent {
+  sessionId: string;
+  type: 'started' | 'delta' | 'final' | 'error';
+  text?: string;
+  error?: string;
+}
