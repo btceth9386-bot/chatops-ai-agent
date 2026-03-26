@@ -54,6 +54,7 @@ class FakeStreamController {
 
 const logger = {
   logInfo: vi.fn().mockResolvedValue(undefined),
+  logWarn: vi.fn().mockResolvedValue(undefined),
 } as any;
 
 function event(messageText: string): SlackEvent {
@@ -118,5 +119,21 @@ describe('SlackSessionRuntime', () => {
     await flush();
 
     expect(stream.failures).toContain('boom');
+  });
+
+  it('routes unknown-session ACP errors to the current inflight session', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('please fail mysteriously'), channel, 'prompt');
+    await flush();
+    acpManager.emit({ sessionId: 'unknown', type: 'error', error: 'stderr boom' });
+
+    await flush();
+
+    expect(stream.failures).toContain('stderr boom');
   });
 });
