@@ -25,7 +25,7 @@ interface JsonRpcMessage {
 interface AcpTransport {
   initialize(): Promise<void>;
   createSession(agent?: AgentName): Promise<string>;
-  prompt(sessionId: string, content: Array<{ type: 'text'; text: string }>): Promise<void>;
+  prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
   onEvent(listener: (event: AcpEvent) => void): void;
 }
 

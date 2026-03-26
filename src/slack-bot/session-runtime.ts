@@ -103,7 +103,7 @@ export class SlackSessionRuntime {
 
     await this.acpManager.sendPrompt({
       sessionId: acpSessionId,
-      content: [
+      prompt: [
         {
           type: 'text',
           text: next.messageText,

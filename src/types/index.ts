@@ -184,7 +184,10 @@ export interface SkillAnalysisResult {
 
 export interface AcpPromptPayload {
   sessionId: string;
-  prompt: string;
+  prompt: Array<{
+    type: 'text';
+    text: string;
+  }>;
   agent: AgentName;
   metadata: {
     channelId: string;
