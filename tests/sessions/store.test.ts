@@ -72,4 +72,14 @@ describe('session store', () => {
     });
     expect(loadedByAcp).toMatchObject({ sessionKey: 'THREAD#C1:1.2', acpSessionId: 'acp-1' });
   });
+
+  it('omits empty acpSessionId when writing dynamodb items so GSI keys stay valid', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const store = new DynamoDbSessionStore({ tableName: 'sessions', ttlSeconds: 123, client: { send } as any });
+
+    await store.put(makeState({ acpSessionId: '' }));
+
+    const command = send.mock.calls[0][0];
+    expect(command.input.Item.acpSessionId).toBeUndefined();
+  });
 });

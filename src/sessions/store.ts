@@ -144,7 +144,7 @@ export class DynamoDbSessionStore implements SessionStore {
         TableName: this.options.tableName,
         Item: {
           pk: { S: record.pk },
-          acpSessionId: { S: record.acpSessionId },
+          ...(record.acpSessionId ? { acpSessionId: { S: record.acpSessionId } } : {}),
           agentName: { S: record.agentName },
           responseMode: { S: state.responseMode },
           inflight: { BOOL: state.inflight },
