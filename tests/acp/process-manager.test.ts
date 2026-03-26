@@ -5,7 +5,7 @@ import type { AcpEvent } from '../../src/types';
 class FakeTransport {
   public initializeCalls = 0;
   public createSessionCalls = 0;
-  public prompts: Array<{ sessionId: string; prompt: string }> = [];
+  public prompts: Array<{ sessionId: string; prompt: Array<{ type: 'text'; text: string }> }> = [];
   private readonly listeners = new Set<(event: AcpEvent) => void>();
 
   async initialize(): Promise<void> {
@@ -17,7 +17,7 @@ class FakeTransport {
     return `acp-${this.createSessionCalls}`;
   }
 
-  async prompt(sessionId: string, prompt: string): Promise<void> {
+  async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
     this.prompts.push({ sessionId, prompt });
   }
 
@@ -75,5 +75,29 @@ describe('AcpProcessManager', () => {
     transport.emit({ sessionId: 'acp-1', type: 'delta', text: 'hello' });
 
     expect(events).toEqual([{ sessionId: 'acp-1', type: 'delta', text: 'hello' }]);
+  });
+
+  it('sends ACP prompts using prompt arrays rather than legacy string payloads', async () => {
+    const transport = new FakeTransport();
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    await manager.sendPrompt({
+      sessionId: 'acp-1',
+      prompt: [{ type: 'text', text: 'hello from slack' }],
+      agent: 'senior-agent',
+      metadata: {
+        channelId: 'C1',
+        threadTs: '123.456',
+        userId: 'U1',
+        requestKind: 'prompt',
+      },
+    });
+
+    expect(transport.prompts).toEqual([
+      {
+        sessionId: 'acp-1',
+        prompt: [{ type: 'text', text: 'hello from slack' }],
+      },
+    ]);
   });
 });

@@ -83,7 +83,12 @@ describe('SlackSessionRuntime', () => {
     await runtime.enqueue(event('architect please help'), channel, 'escalation');
 
     expect(acpManager.prompts).toHaveLength(1);
-    expect(acpManager.prompts[0]).toMatchObject({ agent: 'senior-agent', sessionId: 'acp-1' });
+    expect(acpManager.prompts[0]).toMatchObject({
+      agent: 'senior-agent',
+      sessionId: 'acp-1',
+      prompt: [{ type: 'text', text: 'first prompt' }],
+    });
+    expect('content' in acpManager.prompts[0]).toBe(false);
 
     acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'partial ' });
     acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'done' });
@@ -91,7 +96,11 @@ describe('SlackSessionRuntime', () => {
     await flush();
 
     expect(acpManager.prompts).toHaveLength(2);
-    expect(acpManager.prompts[1]).toMatchObject({ agent: 'architect-agent', sessionId: 'acp-1' });
+    expect(acpManager.prompts[1]).toMatchObject({
+      agent: 'architect-agent',
+      sessionId: 'acp-1',
+      prompt: [{ type: 'text', text: 'architect please help' }],
+    });
     expect(stream.updates).toContain('partial ');
     expect(stream.updates).toContain('FINAL:partial done');
   });

@@ -32,6 +32,15 @@ describe('session store', () => {
   });
 
   it('reads and writes dynamodb session records', async () => {
+    const queue = [{
+      messageText: 'hello',
+      channelId: 'C1',
+      threadTs: '1.2',
+      userId: 'U1',
+      timestamp: '1.2',
+      kind: 'prompt' as const,
+    }];
+
     const send = vi
       .fn()
       .mockResolvedValueOnce({})
@@ -42,16 +51,22 @@ describe('session store', () => {
           agentName: { S: 'architect-agent' },
           responseMode: { S: 'publish_channel' },
           inflight: { BOOL: true },
+          queue: { S: JSON.stringify(queue) },
           statusMessageTs: { S: '999.1' },
           lastUpdatedAt: { S: '2026-03-23T00:00:00.000Z' },
         },
       });
 
     const store = new DynamoDbSessionStore({ tableName: 'sessions', ttlSeconds: 123, client: { send } as any });
-    await store.put(makeState());
+    await store.put(makeState({ queue }));
     const loaded = await store.get('THREAD#C1:1.2');
 
     expect(send).toHaveBeenCalled();
-    expect(loaded).toMatchObject({ activeAgent: 'architect-agent', responseMode: 'publish_channel', inflight: true });
+    expect(loaded).toMatchObject({
+      activeAgent: 'architect-agent',
+      responseMode: 'publish_channel',
+      inflight: true,
+      queue,
+    });
   });
 });
