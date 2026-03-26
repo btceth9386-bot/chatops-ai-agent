@@ -523,6 +523,67 @@ Reference tool for looking up AWS documentation during investigations.
 
 Allowed tools: `search_documentation`, `get_documentation`, `recommend`
 
+### 3a. AWS Authentication
+
+The application uses AWS SDK v3 for DynamoDB and CloudWatch Logs access. Authentication follows the AWS SDK default credential chain, with different strategies per environment.
+
+#### Authentication Strategies
+
+| Environment | Strategy | How It Works |
+|---|---|---|
+| Local development | IAM User → Assume Role via AWS profile | Developer configures `~/.aws/credentials` with IAM user keys and `~/.aws/config` with a profile that assumes the project role. Set `AWS_PROFILE` env var. |
+| EC2 deployment | EC2 Instance Profile | IAM role attached directly to the EC2 instance via instance profile. No credentials in config — the SDK picks them up automatically from IMDS. |
+| CI/CD | IAM User or OIDC → Assume Role | GitHub Actions (or similar) assumes the project role via OIDC federation or IAM user credentials stored in secrets. |
+
+#### IAM Resources (managed by Terraform)
+
+- `chatops-ai-agent-role` — IAM role with DynamoDB and CloudWatch Logs permissions, scoped to the specific table and log group
+- `chatops-ai-agent-instance-profile` — EC2 instance profile that attaches `chatops-ai-agent-role` to the EC2 instance
+- `chatops-ai-agent-user` — IAM user with `sts:AssumeRole` permission only (no direct AWS service access)
+
+#### Local Development Setup
+
+1. Run `terraform apply` to create the IAM user and role
+2. Retrieve the access key:
+   ```bash
+   terraform output iam_user_access_key_id
+   terraform output -raw iam_user_secret_access_key
+   ```
+3. Configure AWS profiles:
+   ```ini
+   # ~/.aws/credentials
+   [chatops-ai-agent-user]
+   aws_access_key_id = <from step 2>
+   aws_secret_access_key = <from step 2>
+
+   # ~/.aws/config
+   [profile chatops-ai-agent]
+   role_arn = <from terraform output iam_role_arn>
+   source_profile = chatops-ai-agent-user
+   region = us-east-1
+   ```
+4. Run the application with the profile:
+   ```bash
+   AWS_PROFILE=chatops-ai-agent node dist/index.js
+   ```
+
+#### EC2 Deployment Setup
+
+When deploying to EC2, attach the Terraform-managed `chatops-ai-agent-instance-profile` to the instance. The AWS SDK default credential chain picks up the role automatically via IMDS — no `AWS_PROFILE` or access keys needed.
+
+#### Code Usage
+
+No special credential code is required. The AWS SDK v3 default credential chain resolves credentials automatically based on the environment:
+
+```typescript
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
+
+// SDK resolves credentials from: env vars → AWS profile → instance profile → etc.
+const dynamodb = new DynamoDBClient({ region: process.env.AWS_REGION || "us-east-1" });
+const cloudwatch = new CloudWatchLogsClient({ region: process.env.AWS_REGION || "us-east-1" });
+```
+
 ### 4. Skill_Analysis_Cronjob
 
 Runs every 30 minutes (configurable). Scans un-analyzed session logs, proposes skill improvements via GitHub PRs.

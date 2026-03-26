@@ -1,10 +1,12 @@
 export type ChannelMode = 'learning' | 'auto_investigation' | 'mention_based';
 export type ResponseMode = 'thread_reply' | 'publish_channel';
+export type AgentName = 'senior-agent' | 'architect-agent';
 
 export interface ChannelConfig {
   channelId: string;
   mode: ChannelMode;
-  responseMode?: ResponseMode;
+  responseMode: ResponseMode;
+  publishChannelId?: string;
   enabled?: boolean;
 }
 
@@ -16,16 +18,17 @@ export interface SlackBotConfig {
   cloudwatchLogGroup: string;
   dynamoTableName: string;
   maxMessageLength: number;
-  configReloadIntervalMs?: number;
+  maxActiveSessions: number;
+  configFilePath: string;
 }
 
 export interface SlackEvent {
   type: 'app_mention' | 'message';
+  messageText: string;
   channelId: string;
   threadTs: string;
   userId: string;
-  text: string;
-  ts?: string;
+  timestamp: string;
 }
 
 export interface SanitizedInput {
@@ -34,65 +37,70 @@ export interface SanitizedInput {
   originalLength: number;
 }
 
-export type AgentName = 'senior-agent' | 'architect-agent';
-
 export interface SessionRecord {
-  sessionKey: string;
+  pk: string;
   acpSessionId: string;
   agentName: AgentName;
-  createdAt: string;
-  lastActiveAt: string;
+  createdAt: number;
+  lastActiveAt: number;
   ttl: number;
 }
 
 export interface SessionRequest {
-  requestId: string;
-  message: string;
+  messageText: string;
+  channelId: string;
+  threadTs: string;
   userId: string;
-  createdAt: number;
+  timestamp: string;
   kind?: 'prompt' | 'escalation';
 }
 
 export interface SessionState {
-  record: SessionRecord;
+  sessionKey: string;
+  acpSessionId: string;
+  activeAgent: AgentName;
   inflight: boolean;
   queue: SessionRequest[];
+  responseMode: ResponseMode;
   statusMessageTs?: string;
-  responseMode?: ResponseMode;
+  lastUpdatedAt: string;
 }
 
 export interface SafeSummary {
-  findings: string[];
+  findings: string;
   hypotheses: string[];
   recommendedActions: string[];
-  finalText: string;
+  totalLength: number;
 }
 
 export interface TriageResult {
   incidentType: 'alert' | 'investigation' | 'validation' | 'general_query';
-  severity?: 'low' | 'medium' | 'high' | 'critical';
-  rationale: string;
+  severity: string;
+  reasoning: string;
 }
 
 export interface ToolUpdate {
   toolName: string;
-  status: 'started' | 'running' | 'done' | 'failed';
-  message?: string;
-  timestamp: string;
+  status: 'started' | 'completed' | 'failed';
+  summary?: string;
 }
 
 export interface AgentConfig {
   name: AgentName;
-  model?: string;
-  temperature?: number;
+  role: string;
+  tools: string[];
+  skills: string[];
 }
 
 export interface AuditLogEntry {
   timestamp: string;
-  sessionKey?: string;
-  userId?: string;
+  requesterId: string;
+  channelId: string;
+  threadTs: string;
   action: string;
-  details?: Record<string, unknown>;
+  component: string;
+  details: Record<string, unknown>;
+  queryId: string;
 }
 
 export interface ErrorLogEntry {
@@ -100,47 +108,98 @@ export interface ErrorLogEntry {
   level: 'error' | 'warn' | 'info';
   message: string;
   stackTrace?: string;
-  requestContext?: Record<string, unknown>;
+  requestContext?: {
+    channelId?: string;
+    threadTs?: string;
+    userId?: string;
+    component?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface SessionMetric {
-  sessionKey: string;
+  sessionId: string;
+  timestamp: string;
+  agentName: AgentName;
   incidentType: string;
   skillsReferenced: string[];
-  resolutionTimeSeconds?: number;
+  resolutionTimeSeconds: number;
   escalationNeeded: boolean;
-  agentName: AgentName;
-  timestamp: string;
+  humanRating: 'useful' | 'not_useful' | 'skip' | 'pending';
+  prNumber: number | null;
 }
 
 export interface SkillBenchmark {
   skillName: string;
-  runs: number;
-  successRate: number;
-  avgResolutionTimeSeconds: number;
+  timesReferenced: number;
+  averageResolutionTime: number;
+  escalationRate: number;
+  humanApprovalRate: number;
 }
 
 export interface BenchmarkReport {
-  generatedAt: string;
-  periodStart: string;
-  periodEnd: string;
-  benchmarks: SkillBenchmark[];
+  weekStart: string;
+  weekEnd: string;
+  skills: SkillBenchmark[];
+  regressions: Array<{
+    skillName: string;
+    metric: string;
+    previousValue: number;
+    currentValue: number;
+    changePercent: number;
+  }>;
 }
 
 export interface BenchmarkConfig {
-  cron: string;
-  alertThresholdPct: number;
+  schedule: string;
+  metricsDirectory: string;
+  outputDirectory: string;
+  regressionThreshold: number;
+  retentionDays: number;
+  alertSlackChannel: string;
+  cloudwatchLogGroup: string;
 }
 
 export interface SkillAnalysisConfig {
-  skillsDir: string;
-  logsDir: string;
-  maxFilesPerRun?: number;
+  scheduleInterval: string;
+  logsDirectory: string;
+  skillsDirectory: string;
+  targetRepo: string;
+  targetBranch: string;
+  cloudwatchLogGroup: string;
 }
 
 export interface SkillAnalysisResult {
-  analyzedFile: string;
-  matchedSkill?: string;
-  action: 'update_existing' | 'create_new' | 'no_change';
-  summary: string;
+  sessionLogPath: string;
+  matchedSkill: string | null;
+  prNumber: number;
+  prUrl: string;
+  action: 'create' | 'update';
+  metadata: {
+    sessionTimestamp: string;
+    incidentType: string;
+    affectedSystems: string[];
+  };
+}
+
+export interface AcpPromptPayload {
+  sessionId: string;
+  prompt: Array<{
+    type: 'text';
+    text: string;
+  }>;
+  agent: AgentName;
+  metadata: {
+    channelId: string;
+    threadTs: string;
+    userId: string;
+    requestKind: 'prompt' | 'escalation';
+  };
+}
+
+export interface AcpEvent {
+  sessionId: string;
+  type: 'started' | 'delta' | 'final' | 'error';
+  text?: string;
+  error?: string;
 }

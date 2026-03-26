@@ -1,20 +1,30 @@
-[
-  {
-    "channelId": "C_LEARNING_EXAMPLE",
-    "mode": "learning",
-    "responseMode": "thread_reply",
-    "enabled": true
-  },
-  {
-    "channelId": "C_AUTO_INVESTIGATION_EXAMPLE",
-    "mode": "auto_investigation",
-    "responseMode": "thread_reply",
-    "enabled": true
-  },
-  {
-    "channelId": "C_MENTION_BASED_EXAMPLE",
-    "mode": "mention_based",
-    "responseMode": "publish_channel",
-    "enabled": true
-  }
-]
+{
+  "channels": [
+    {
+      "channelId": "C_AUTO_INVESTIGATION_EXAMPLE",
+      "mode": "auto_investigation",
+      "responseMode": "thread_reply",
+      "enabled": true
+    },
+    {
+      "channelId": "C0ANG9N9MAM",
+      "mode": "mention_based",
+      "responseMode": "thread_reply",
+      "enabled": true
+    },
+    {
+      "channelId": "C_LEARNING_EXAMPLE",
+      "mode": "learning",
+      "responseMode": "thread_reply",
+      "enabled": true
+    },
+    {
+      "channelId": "C_PUBLISH_CHANNEL_EXAMPLE",
+      "mode": "auto_investigation",
+      "responseMode": "publish_channel",
+      "publishChannelId": "C_INCIDENT_SUMMARY_EXAMPLE",
+      "enabled": true
+    }
+  ],
+  "monitoredThreads": true
+}
