@@ -12,6 +12,17 @@ resource "aws_dynamodb_table" "sessions" {
     type = "S"
   }
 
+  attribute {
+    name = "acpSessionId"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "acpSessionId-index"
+    hash_key        = "acpSessionId"
+    projection_type = "ALL"
+  }
+
   ttl {
     attribute_name = "ttl"
     enabled        = true

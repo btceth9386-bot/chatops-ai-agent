@@ -119,4 +119,23 @@ describe('SlackSessionRuntime', () => {
 
     expect(stream.failures).toContain('boom');
   });
+
+  it('falls back to sessionStore.getByAcpSessionId when reverse index is cold', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('hello fallback'), channel, 'prompt');
+    // simulate process-local reverse index miss while Dynamo-backed state still exists
+    (runtime as any).acpSessionIndex.clear();
+    acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'hi ' });
+    acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'there' });
+
+    await flush();
+
+    expect(stream.updates).toContain('hi ');
+    expect(stream.updates).toContain('FINAL:hi there');
+  });
 });
