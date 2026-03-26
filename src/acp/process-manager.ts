@@ -344,7 +344,7 @@ export class AcpProcessManager {
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
     this.sessions.set(`${payload.metadata.channelId}:${payload.metadata.threadTs}`, payload.sessionId);
-    await this.transport.prompt(payload.sessionId, payload.content);
+    await this.transport.prompt(payload.sessionId, payload.prompt);
   }
 
   private emit(event: AcpEvent): void {
