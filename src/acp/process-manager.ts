@@ -153,14 +153,14 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     return sessionId;
   }
 
-  async prompt(sessionId: string, content: Array<{ type: 'text'; text: string }>): Promise<void> {
+  async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
     await this.initialize();
 
     const id = this.nextId;
     this.promptRequests.set(id, sessionId);
     await this.sendRequest('session/prompt', {
       sessionId,
-      content,
+      prompt,
     });
   }
 
