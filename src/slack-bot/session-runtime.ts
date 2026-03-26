@@ -103,7 +103,12 @@ export class SlackSessionRuntime {
 
     await this.acpManager.sendPrompt({
       sessionId: acpSessionId,
-      prompt: next.messageText,
+      content: [
+        {
+          type: 'text',
+          text: next.messageText,
+        },
+      ],
       agent: activeAgent,
       metadata: {
         channelId: next.channelId,
@@ -155,6 +160,7 @@ export class SlackSessionRuntime {
       lastUpdatedAt: isoNow(),
     };
 
+    await this.sessionBuffers.delete(state.acpSessionId);
     await this.sessionStore.put(nextState);
     await this.processNext(state.sessionKey);
   }

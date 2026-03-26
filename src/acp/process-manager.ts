@@ -25,7 +25,7 @@ interface JsonRpcMessage {
 interface AcpTransport {
   initialize(): Promise<void>;
   createSession(agent?: AgentName): Promise<string>;
-  prompt(sessionId: string, prompt: string): Promise<void>;
+  prompt(sessionId: string, content: Array<{ type: 'text'; text: string }>): Promise<void>;
   onEvent(listener: (event: AcpEvent) => void): void;
 }
 
@@ -73,6 +73,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   private nextId = 1;
   private initialized = false;
   private readonly pending = new Map<JsonRpcId, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly promptRequests = new Map<JsonRpcId, string>();
 
   constructor(command: string) {
     super();
@@ -106,6 +107,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
         pending.reject(new Error(detail));
       }
       this.pending.clear();
+      this.promptRequests.clear();
       this.emitAcpEvent({ sessionId: 'unknown', type: 'error', error: detail });
     });
   }
@@ -117,7 +119,13 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     await this.sendRequest('initialize', {
       protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: {},
+      clientCapabilities: {
+        fs: {
+          readTextFile: true,
+          writeTextFile: true,
+        },
+        terminal: true,
+      },
       clientInfo: {
         name: 'chatops-ai-agent',
         version: '0.1.0',
@@ -133,6 +141,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const result = await this.sendRequest('session/new', {
       cwd: process.cwd(),
       agentName: agent,
+      mcpServers: [],
     });
 
     const sessionId = asString(asRecord(result)?.sessionId);
@@ -144,12 +153,14 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     return sessionId;
   }
 
-  async prompt(sessionId: string, prompt: string): Promise<void> {
+  async prompt(sessionId: string, content: Array<{ type: 'text'; text: string }>): Promise<void> {
     await this.initialize();
 
+    const id = this.nextId;
+    this.promptRequests.set(id, sessionId);
     await this.sendRequest('session/prompt', {
       sessionId,
-      prompt,
+      content,
     });
   }
 
@@ -178,16 +189,27 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
       this.pending.delete(message.id);
       if (message.error) {
+        this.promptRequests.delete(message.id);
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         return;
       }
 
       pending.resolve(message.result);
-      this.emitPromptResult(message.result);
+      const promptSessionId = this.promptRequests.get(message.id);
+      if (promptSessionId) {
+        this.promptRequests.delete(message.id);
+        this.emitAcpEvent({
+          sessionId: promptSessionId,
+          type: 'final',
+          text: collectText(asRecord(message.result)?.content),
+        });
+      } else {
+        this.emitPromptResult(message.result);
+      }
       return;
     }
 
-    if (message.method === 'session/update') {
+    if (message.method === 'session/update' || message.method === 'session/notification') {
       this.emitSessionUpdate(message.params);
     }
   }
@@ -197,7 +219,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const sessionId = asString(record?.sessionId);
     const text = collectText(record?.content);
 
-    if (sessionId && text) {
+    if (sessionId) {
       this.emitAcpEvent({ sessionId, type: 'final', text });
     }
   }
@@ -214,20 +236,30 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const content = update.content;
     const text = collectText(content) || collectText(update);
 
-    if (updateType === 'agent_message_chunk' || updateType === 'agent_thought_chunk' || updateType === 'user_message_chunk') {
+    if (
+      updateType === 'agent_message_chunk' ||
+      updateType === 'agent_thought_chunk' ||
+      updateType === 'user_message_chunk' ||
+      updateType === 'AgentMessageChunk'
+    ) {
       if (text) {
         this.emitAcpEvent({ sessionId, type: 'delta', text });
       }
       return;
     }
 
-    if (updateType === 'tool_call') {
+    if (updateType === 'tool_call' || updateType === 'ToolCall') {
       const toolName = asString(update.name) ?? 'tool';
       this.emitAcpEvent({ sessionId, type: 'delta', text: `\n[tool:${toolName}]\n` });
       return;
     }
 
-    if (updateType === 'current_mode_update' || updateType === 'available_commands_update' || updateType === 'config_option_update') {
+    if (
+      updateType === 'current_mode_update' ||
+      updateType === 'available_commands_update' ||
+      updateType === 'config_option_update' ||
+      updateType === 'TurnEnd'
+    ) {
       return;
     }
 
@@ -250,6 +282,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       this.child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
         if (error) {
           this.pending.delete(id);
+          this.promptRequests.delete(id);
           reject(error);
         }
       });
@@ -310,8 +343,8 @@ export class AcpProcessManager {
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
-    this.sessions.set(payload.metadata.channelId + ':' + payload.metadata.threadTs, payload.sessionId);
-    await this.transport.prompt(payload.sessionId, payload.prompt);
+    this.sessions.set(`${payload.metadata.channelId}:${payload.metadata.threadTs}`, payload.sessionId);
+    await this.transport.prompt(payload.sessionId, payload.content);
   }
 
   private emit(event: AcpEvent): void {

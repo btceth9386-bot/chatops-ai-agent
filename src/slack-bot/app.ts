@@ -41,8 +41,10 @@ export async function createSlackApp() {
   const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
 
   app.event('app_mention', async ({ event }) => {
+    console.log('[DIAG] app_mention received:', JSON.stringify({ user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts }));
     const slackEvent = toSlackEvent(event as any, 'app_mention', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));
     await handleSlackEvent(slackEvent, routing, logger, runtime);
+    console.log('[DIAG] app_mention handleSlackEvent completed');
   });
 
   app.event('message', async ({ event }) => {
@@ -59,6 +61,7 @@ export async function createSlackApp() {
   });
 
   app.error(async (error) => {
+    console.error('[DIAG] Bolt global error:', error);
     await logger.logError('Bolt app error', error as Error, { component: 'slack-app' });
   });
 
