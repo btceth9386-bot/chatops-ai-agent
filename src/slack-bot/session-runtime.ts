@@ -15,6 +15,7 @@ function isoNow(): string {
 export class SlackSessionRuntime {
   private readonly sessionTargets = new Map<string, ChannelConfig & { threadTs: string }>();
   private readonly sessionBuffers = new Map<string, string>();
+  private readonly acpSessionIndex = new Map<string, string>();
   private readonly perSessionLocks = new Map<string, Promise<void>>();
 
   constructor(
@@ -166,11 +167,15 @@ export class SlackSessionRuntime {
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
-    for (const sessionKey of this.sessionTargets.keys()) {
-      const state = await this.sessionStore.get(sessionKey);
-      if (state?.acpSessionId === acpSessionId) {
-        return state;
-      }
+    const indexedSessionKey = this.acpSessionIndex.get(acpSessionId);
+    if (indexedSessionKey) {
+      return await this.sessionStore.get(indexedSessionKey);
+    }
+
+    const state = await this.sessionStore.getByAcpSessionId(acpSessionId);
+    if (state) {
+      this.acpSessionIndex.set(acpSessionId, state.sessionKey);
+      return state;
     }
 
     return null;
