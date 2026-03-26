@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AcpEvent, AcpPromptPayload, AgentName } from '../types';
 
 const JSON_RPC_VERSION = '2.0';
 const ACP_PROTOCOL_VERSION = 1;
+const ACP_REQUEST_TIMEOUT_MS = 60_000;
 
 type JsonRpcId = number;
 
@@ -68,51 +70,29 @@ function collectText(value: unknown): string {
 }
 
 class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
-  private readonly child;
+  private child: ChildProcessWithoutNullStreams | undefined;
   private buffer = '';
   private nextId = 1;
   private initialized = false;
-  private readonly pending = new Map<JsonRpcId, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private readonly pending = new Map<JsonRpcId, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+    method: string;
+  }>();
   private readonly promptRequests = new Map<JsonRpcId, string>();
 
-  constructor(command: string) {
+  constructor(private readonly command: string) {
     super();
-    this.child = spawn('sh', ['-lc', command], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    this.child.stdout.on('data', (chunk: Buffer | string) => {
-      this.buffer += chunk.toString();
-      const lines = this.buffer.split(/\r?\n/);
-      this.buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        this.handleLine(trimmed);
-      }
-    });
-
-    this.child.stderr.on('data', (chunk: Buffer | string) => {
-      this.emitAcpEvent({
-        sessionId: 'unknown',
-        type: 'error',
-        error: chunk.toString().trim(),
-      });
-    });
-
-    this.child.on('exit', (code, signal) => {
-      const detail = `ACP process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
-      for (const pending of this.pending.values()) {
-        pending.reject(new Error(detail));
-      }
-      this.pending.clear();
-      this.promptRequests.clear();
-      this.emitAcpEvent({ sessionId: 'unknown', type: 'error', error: detail });
-    });
+    this.child = this.spawnChild();
   }
 
   async initialize(): Promise<void> {
+    if (!this.child || this.child.exitCode !== null || this.child.killed) {
+      this.child = this.spawnChild();
+      this.initialized = false;
+    }
+
     if (this.initialized) {
       return;
     }
@@ -168,6 +148,47 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     this.on('event', listener);
   }
 
+  private spawnChild() {
+    const child = spawn('sh', ['-lc', this.command], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdout.on('data', (chunk: Buffer | string) => {
+      this.buffer += chunk.toString();
+      const lines = this.buffer.split(/\r?\n/);
+      this.buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        this.handleLine(trimmed);
+      }
+    });
+
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      this.emitAcpEvent({
+        sessionId: 'unknown',
+        type: 'error',
+        error: chunk.toString().trim(),
+      });
+    });
+
+    child.on('exit', (code, signal) => {
+      const detail = `ACP process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error(detail));
+      }
+      this.pending.clear();
+      this.promptRequests.clear();
+      this.initialized = false;
+      this.child = undefined;
+      this.emitAcpEvent({ sessionId: 'unknown', type: 'error', error: detail });
+    });
+
+    return child;
+  }
+
   private handleLine(line: string): void {
     let message: JsonRpcMessage;
     try {
@@ -188,6 +209,8 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       }
 
       this.pending.delete(message.id);
+      clearTimeout(pending.timeout);
+
       if (message.error) {
         this.promptRequests.delete(message.id);
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
@@ -278,9 +301,28 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     };
 
     return await new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        const sessionId = this.promptRequests.get(id) ?? 'unknown';
+        this.promptRequests.delete(id);
+        const error = new Error(`ACP request timed out: ${method}`);
+        this.emitAcpEvent({ sessionId, type: 'error', error: error.message });
+        reject(error);
+      }, ACP_REQUEST_TIMEOUT_MS);
+
+      this.pending.set(id, { resolve, reject, timeout, method });
+      const child = this.child;
+      if (!child) {
+        clearTimeout(timeout);
+        this.pending.delete(id);
+        this.promptRequests.delete(id);
+        reject(new Error('ACP process is not available'));
+        return;
+      }
+
+      child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
         if (error) {
+          clearTimeout(timeout);
           this.pending.delete(id);
           this.promptRequests.delete(id);
           reject(error);

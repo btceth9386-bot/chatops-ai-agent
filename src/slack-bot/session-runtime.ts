@@ -160,7 +160,7 @@ export class SlackSessionRuntime {
       lastUpdatedAt: isoNow(),
     };
 
-    await this.sessionBuffers.delete(state.acpSessionId);
+    this.sessionBuffers.delete(state.acpSessionId);
     await this.sessionStore.put(nextState);
     await this.processNext(state.sessionKey);
   }
