@@ -29,6 +29,7 @@ interface AcpTransport {
   createSession(agent?: AgentName): Promise<string>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
   onEvent(listener: (event: AcpEvent) => void): void;
+  close(): void;
 }
 
 export interface AcpManagerOptions {
@@ -331,6 +332,24 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     });
   }
 
+  close(): void {
+    const child = this.child;
+    if (!child || child.killed || child.exitCode !== null) {
+      this.child = undefined;
+      this.initialized = false;
+      return;
+    }
+
+    try {
+      process.kill(-child.pid!, 'SIGTERM');
+    } catch {
+      child.kill('SIGTERM');
+    }
+
+    this.child = undefined;
+    this.initialized = false;
+  }
+
   private emitAcpEvent(event: AcpEvent): void {
     this.emit('event', event);
   }
@@ -387,6 +406,10 @@ export class AcpProcessManager {
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
     this.sessions.set(`${payload.metadata.channelId}:${payload.metadata.threadTs}`, payload.sessionId);
     await this.transport.prompt(payload.sessionId, payload.prompt);
+  }
+
+  close(): void {
+    this.transport.close();
   }
 
   private emit(event: AcpEvent): void {

@@ -40,6 +40,17 @@ export async function createSlackApp() {
   const streamController = new SlackStreamController(app.client as any);
   const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
 
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    acpManager.close();
+  };
+
+  process.once('SIGINT', cleanup);
+  process.once('SIGTERM', cleanup);
+  process.once('exit', cleanup);
+
   app.event('app_mention', async ({ event }) => {
     console.log('[DIAG] app_mention received:', JSON.stringify({ user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts }));
     const slackEvent = toSlackEvent(event as any, 'app_mention', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));

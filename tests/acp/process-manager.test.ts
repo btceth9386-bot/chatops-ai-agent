@@ -5,6 +5,7 @@ import type { AcpEvent } from '../../src/types';
 class FakeTransport {
   public initializeCalls = 0;
   public createSessionCalls = 0;
+  public closeCalls = 0;
   public prompts: Array<{ sessionId: string; prompt: Array<{ type: 'text'; text: string }> }> = [];
   private readonly listeners = new Set<(event: AcpEvent) => void>();
 
@@ -23,6 +24,10 @@ class FakeTransport {
 
   onEvent(listener: (event: AcpEvent) => void): void {
     this.listeners.add(listener);
+  }
+
+  close(): void {
+    this.closeCalls += 1;
   }
 
   emit(event: AcpEvent): void {
@@ -99,5 +104,14 @@ describe('AcpProcessManager', () => {
         prompt: [{ type: 'text', text: 'hello from slack' }],
       },
     ]);
+  });
+
+  it('closes the underlying transport', () => {
+    const transport = new FakeTransport();
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    manager.close();
+
+    expect(transport.closeCalls).toBe(1);
   });
 });
