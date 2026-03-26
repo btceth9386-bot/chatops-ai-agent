@@ -15,8 +15,6 @@ function isoNow(): string {
 export class SlackSessionRuntime {
   private readonly sessionTargets = new Map<string, ChannelConfig & { threadTs: string }>();
   private readonly sessionBuffers = new Map<string, string>();
-  private readonly sessionIndexByAcpSessionId = new Map<string, string>();
-  private currentInflightSessionKey: string | null = null;
   private readonly perSessionLocks = new Map<string, Promise<void>>();
 
   constructor(
@@ -85,8 +83,6 @@ export class SlackSessionRuntime {
     );
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
     this.sessionBuffers.set(acpSessionId, '');
-    this.sessionIndexByAcpSessionId.set(acpSessionId, sessionKey);
-    this.currentInflightSessionKey = sessionKey;
 
     await this.sessionStore.put({
       ...state,
@@ -126,12 +122,6 @@ export class SlackSessionRuntime {
   private async handleAcpEvent(event: AcpEvent): Promise<void> {
     const state = await this.findStateByAcpSessionId(event.sessionId);
     if (!state) {
-      await this.logger.logWarn('Dropped ACP event without matching session', {
-        component: 'session-runtime',
-        acpSessionId: event.sessionId,
-        eventType: event.type,
-        error: event.error,
-      });
       return;
     }
 
@@ -171,21 +161,16 @@ export class SlackSessionRuntime {
     };
 
     this.sessionBuffers.delete(state.acpSessionId);
-    if (this.currentInflightSessionKey === state.sessionKey) {
-      this.currentInflightSessionKey = null;
-    }
     await this.sessionStore.put(nextState);
     await this.processNext(state.sessionKey);
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
-    const indexedSessionKey = this.sessionIndexByAcpSessionId.get(acpSessionId);
-    if (indexedSessionKey) {
-      return await this.sessionStore.get(indexedSessionKey);
-    }
-
-    if (acpSessionId === 'unknown' && this.currentInflightSessionKey) {
-      return await this.sessionStore.get(this.currentInflightSessionKey);
+    for (const sessionKey of this.sessionTargets.keys()) {
+      const state = await this.sessionStore.get(sessionKey);
+      if (state?.acpSessionId === acpSessionId) {
+        return state;
+      }
     }
 
     return null;
