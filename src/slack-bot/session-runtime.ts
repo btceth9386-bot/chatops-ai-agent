@@ -84,6 +84,7 @@ export class SlackSessionRuntime {
     );
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
     this.sessionBuffers.set(acpSessionId, '');
+    this.acpSessionIndex.set(acpSessionId, sessionKey);
 
     await this.sessionStore.put({
       ...state,
@@ -169,15 +170,29 @@ export class SlackSessionRuntime {
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
     const indexedSessionKey = this.acpSessionIndex.get(acpSessionId);
     if (indexedSessionKey) {
+      await this.logger.logInfo('ACP session lookup: memory-hit', {
+        component: 'session-runtime',
+        acpSessionId,
+        sessionKey: indexedSessionKey,
+      });
       return await this.sessionStore.get(indexedSessionKey);
     }
 
     const state = await this.sessionStore.getByAcpSessionId(acpSessionId);
     if (state) {
       this.acpSessionIndex.set(acpSessionId, state.sessionKey);
+      await this.logger.logInfo('ACP session lookup: gsi-fallback-hit', {
+        component: 'session-runtime',
+        acpSessionId,
+        sessionKey: state.sessionKey,
+      });
       return state;
     }
 
+    await this.logger.logWarn('ACP session lookup: miss', {
+      component: 'session-runtime',
+      acpSessionId,
+    });
     return null;
   }
 

@@ -54,6 +54,7 @@ class FakeStreamController {
 
 const logger = {
   logInfo: vi.fn().mockResolvedValue(undefined),
+  logWarn: vi.fn().mockResolvedValue(undefined),
 } as any;
 
 function event(messageText: string): SlackEvent {
@@ -118,6 +119,28 @@ describe('SlackSessionRuntime', () => {
     await flush();
 
     expect(stream.failures).toContain('boom');
+  });
+
+  it('logs whether lookup used memory or GSI fallback', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    logger.logInfo.mockClear();
+    logger.logWarn.mockClear();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('hello path'), channel, 'prompt');
+    acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'a' });
+    await flush();
+
+    expect(logger.logInfo).toHaveBeenCalledWith('ACP session lookup: memory-hit', expect.objectContaining({ acpSessionId: 'acp-1' }));
+
+    (runtime as any).acpSessionIndex.clear();
+    acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'b' });
+    await flush();
+
+    expect(logger.logInfo).toHaveBeenCalledWith('ACP session lookup: gsi-fallback-hit', expect.objectContaining({ acpSessionId: 'acp-1' }));
   });
 
   it('falls back to sessionStore.getByAcpSessionId when reverse index is cold', async () => {
