@@ -109,6 +109,11 @@ export class DynamoDbSessionStore implements SessionStore {
   }
 
   async getByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
+    console.error('[DIAG] sessionStore.getByAcpSessionId:start', JSON.stringify({
+      acpSessionId,
+      indexName: ACP_SESSION_ID_INDEX_NAME,
+    }));
+
     const result = await this.client.send(
       new QueryCommand({
         TableName: this.options.tableName,
@@ -123,9 +128,14 @@ export class DynamoDbSessionStore implements SessionStore {
 
     const item = result.Items?.[0];
     if (!item) {
+      console.error('[DIAG] sessionStore.getByAcpSessionId:miss', JSON.stringify({ acpSessionId }));
       return null;
     }
 
+    console.error('[DIAG] sessionStore.getByAcpSessionId:hit', JSON.stringify({
+      acpSessionId,
+      sessionKey: item.pk?.S ?? '',
+    }));
     return fromItem(item.pk?.S ?? '', item as Record<string, any>);
   }
 

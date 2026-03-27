@@ -122,8 +122,19 @@ export class SlackSessionRuntime {
   }
 
   private async handleAcpEvent(event: AcpEvent): Promise<void> {
+    console.error('[DIAG] handleAcpEvent received', JSON.stringify({
+      sessionId: event.sessionId,
+      type: event.type,
+      hasText: Boolean(event.text),
+      hasError: Boolean(event.error),
+    }));
+
     const state = await this.findStateByAcpSessionId(event.sessionId);
     if (!state) {
+      console.error('[DIAG] handleAcpEvent state-miss', JSON.stringify({
+        sessionId: event.sessionId,
+        type: event.type,
+      }));
       return;
     }
 
@@ -168,8 +179,14 @@ export class SlackSessionRuntime {
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
+    console.error('[DIAG] findStateByAcpSessionId:start', JSON.stringify({ acpSessionId }));
+
     const indexedSessionKey = this.acpSessionIndex.get(acpSessionId);
     if (indexedSessionKey) {
+      console.error('[DIAG] findStateByAcpSessionId:memory-hit', JSON.stringify({
+        acpSessionId,
+        sessionKey: indexedSessionKey,
+      }));
       await this.logger.logInfo('ACP session lookup: memory-hit', {
         component: 'session-runtime',
         acpSessionId,
@@ -178,8 +195,13 @@ export class SlackSessionRuntime {
       return await this.sessionStore.get(indexedSessionKey);
     }
 
+    console.error('[DIAG] findStateByAcpSessionId:query-gsi', JSON.stringify({ acpSessionId }));
     const state = await this.sessionStore.getByAcpSessionId(acpSessionId);
     if (state) {
+      console.error('[DIAG] findStateByAcpSessionId:gsi-hit', JSON.stringify({
+        acpSessionId,
+        sessionKey: state.sessionKey,
+      }));
       this.acpSessionIndex.set(acpSessionId, state.sessionKey);
       await this.logger.logInfo('ACP session lookup: gsi-fallback-hit', {
         component: 'session-runtime',
@@ -189,6 +211,7 @@ export class SlackSessionRuntime {
       return state;
     }
 
+    console.error('[DIAG] findStateByAcpSessionId:miss', JSON.stringify({ acpSessionId }));
     await this.logger.logWarn('ACP session lookup: miss', {
       component: 'session-runtime',
       acpSessionId,
