@@ -101,11 +101,18 @@ cp .env.example .env
 # fill in real values
 npm install
 npm run build
-set -a; source .env; set +a
-npm start
+npm run restart:clean
 ```
 
-If you prefer, you can export the variables from your shell instead of using `.env`.
+`npm run restart:clean` is the preferred local/dev entrypoint. It:
+
+- stops old `node dist/src/index.js` processes
+- stops old `kiro-cli acp` / `kiro-cli-chat acp` processes
+- refuses to start if cleanup did not actually succeed
+- loads `.env` automatically when present
+- starts exactly one fresh bot instance
+
+If you prefer, you can still export variables from your shell and run `npm start` directly, but for repeated local debugging the clean restart script is safer.
 
 ## Channel config examples
 
