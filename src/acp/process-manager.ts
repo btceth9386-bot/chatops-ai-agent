@@ -378,6 +378,15 @@ export class AcpProcessManager {
     return () => this.listeners.delete(listener);
   }
 
+  hasSession(sessionKey: string, expectedSessionId?: string): boolean {
+    const current = this.sessions.get(sessionKey);
+    if (!current) {
+      return false;
+    }
+
+    return expectedSessionId ? current === expectedSessionId : true;
+  }
+
   async ensureSession(sessionKey: string, existingSessionId?: string, agent?: AgentName): Promise<string> {
     const current = existingSessionId ?? this.sessions.get(sessionKey);
     if (current) {

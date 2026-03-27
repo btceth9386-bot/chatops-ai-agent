@@ -51,6 +51,17 @@ export class SlackSessionRuntime {
         lastUpdatedAt: isoNow(),
       };
 
+      if (existing.inflight && !this.acpManager.hasSession(sessionKey, existing.acpSessionId || undefined)) {
+        console.error('[DIAG] stale inflight recovered', JSON.stringify({
+          sessionKey,
+          acpSessionId: existing.acpSessionId,
+          queuedBefore: existing.queue.length,
+        }));
+        existing.inflight = false;
+        existing.acpSessionId = '';
+        existing.statusMessageTs = undefined;
+      }
+
       existing.queue.push(request);
       existing.responseMode = channel.responseMode;
       existing.lastUpdatedAt = isoNow();
