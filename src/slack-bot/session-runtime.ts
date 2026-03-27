@@ -168,7 +168,15 @@ export class SlackSessionRuntime {
     }
 
     if (event.type === 'final') {
-      const finalText = `${this.sessionBuffers.get(event.sessionId) ?? ''}${event.text ?? ''}`;
+      const bufferedText = this.sessionBuffers.get(event.sessionId) ?? '';
+      const finalText = event.preserveBuffer ? bufferedText : `${bufferedText}${event.text ?? ''}`;
+      console.error('[DIAG] handleAcpEvent final', JSON.stringify({
+        sessionId: event.sessionId,
+        preserveBuffer: Boolean(event.preserveBuffer),
+        bufferedLength: bufferedText.length,
+        eventTextLength: (event.text ?? '').length,
+        finalLength: finalText.length,
+      }));
       await this.streamController.complete(target, state.statusMessageTs, finalText);
       await this.finishCurrent(state, true);
     }

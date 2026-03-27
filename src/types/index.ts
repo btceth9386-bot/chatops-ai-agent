@@ -202,4 +202,5 @@ export interface AcpEvent {
   type: 'started' | 'delta' | 'final' | 'error';
   text?: string;
   error?: string;
+  preserveBuffer?: boolean;
 }

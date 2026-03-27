@@ -239,16 +239,19 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       if (promptSessionId) {
         this.promptRequests.delete(message.id);
         const finalText = collectText(asRecord(message.result)?.content);
+        const preserveBuffer = finalText.length === 0;
         console.error('[DIAG][ACP handleLine] prompt-result', JSON.stringify({
           id: message.id,
           promptSessionId,
           finalTextLength: finalText.length,
           resultKeys: Object.keys(asRecord(message.result) ?? {}),
+          preserveBuffer,
         }));
         this.emitAcpEvent({
           sessionId: promptSessionId,
           type: 'final',
-          text: finalText,
+          ...(preserveBuffer ? {} : { text: finalText }),
+          preserveBuffer,
         });
       } else {
         this.emitPromptResult(message.result);
