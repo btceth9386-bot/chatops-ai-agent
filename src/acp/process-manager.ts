@@ -162,15 +162,20 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
+        console.error('[DIAG][ACP stdout]', trimmed);
         this.handleLine(trimmed);
       }
     });
 
     child.stderr.on('data', (chunk: Buffer | string) => {
+      const text = chunk.toString().trim();
+      if (text) {
+        console.error('[DIAG][ACP stderr]', text);
+      }
       this.emitAcpEvent({
         sessionId: 'unknown',
         type: 'error',
-        error: chunk.toString().trim(),
+        error: text,
       });
     });
 
@@ -195,6 +200,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     try {
       message = JSON.parse(line) as JsonRpcMessage;
     } catch {
+      console.error('[DIAG][ACP handleLine] parse-failed', line);
       this.emitAcpEvent({
         sessionId: 'unknown',
         type: 'error',
@@ -203,9 +209,18 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       return;
     }
 
+    console.error('[DIAG][ACP handleLine] message-shape', JSON.stringify({
+      hasId: typeof message.id === 'number',
+      id: message.id,
+      method: message.method,
+      hasResult: typeof message.result !== 'undefined',
+      hasError: Boolean(message.error),
+    }));
+
     if (typeof message.id === 'number') {
       const pending = this.pending.get(message.id);
       if (!pending) {
+        console.error('[DIAG][ACP handleLine] no-pending-for-id', JSON.stringify({ id: message.id }));
         return;
       }
 
@@ -213,6 +228,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       clearTimeout(pending.timeout);
 
       if (message.error) {
+        console.error('[DIAG][ACP handleLine] rpc-error', JSON.stringify(message.error));
         this.promptRequests.delete(message.id);
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         return;
@@ -222,10 +238,17 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       const promptSessionId = this.promptRequests.get(message.id);
       if (promptSessionId) {
         this.promptRequests.delete(message.id);
+        const finalText = collectText(asRecord(message.result)?.content);
+        console.error('[DIAG][ACP handleLine] prompt-result', JSON.stringify({
+          id: message.id,
+          promptSessionId,
+          finalTextLength: finalText.length,
+          resultKeys: Object.keys(asRecord(message.result) ?? {}),
+        }));
         this.emitAcpEvent({
           sessionId: promptSessionId,
           type: 'final',
-          text: collectText(asRecord(message.result)?.content),
+          text: finalText,
         });
       } else {
         this.emitPromptResult(message.result);
@@ -235,7 +258,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     if (message.method === 'session/update' || message.method === 'session/notification') {
       this.emitSessionUpdate(message.params);
+      return;
     }
+
+    console.error('[DIAG][ACP handleLine] unhandled-message', line);
   }
 
   private emitPromptResult(result: unknown): void {
@@ -253,12 +279,19 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const sessionId = asString(root?.sessionId) ?? 'unknown';
     const update = asRecord(root?.update);
     if (!update) {
+      console.error('[DIAG][ACP emitSessionUpdate] missing-update', JSON.stringify({ sessionId, rootKeys: Object.keys(root ?? {}) }));
       return;
     }
 
     const updateType = asString(update.sessionUpdate) ?? asString(update.type) ?? asString(update.kind);
     const content = update.content;
     const text = collectText(content) || collectText(update);
+    console.error('[DIAG][ACP emitSessionUpdate]', JSON.stringify({
+      sessionId,
+      updateType,
+      textLength: text.length,
+      updateKeys: Object.keys(update),
+    }));
 
     if (
       updateType === 'agent_message_chunk' ||
