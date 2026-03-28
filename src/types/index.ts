@@ -63,6 +63,7 @@ export interface SessionState {
   queue: SessionRequest[];
   responseMode: ResponseMode;
   statusMessageTs?: string;
+  sessionNotice?: string;
   lastUpdatedAt: string;
 }
 

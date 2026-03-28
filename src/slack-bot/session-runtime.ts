@@ -17,6 +17,7 @@ export class SlackSessionRuntime {
   private readonly sessionBuffers = new Map<string, string>();
   private readonly acpSessionIndex = new Map<string, string>();
   private readonly perSessionLocks = new Map<string, Promise<void>>();
+  private readonly perAcpEventLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly acpManager: AcpProcessManager,
@@ -64,6 +65,7 @@ export class SlackSessionRuntime {
 
       existing.queue.push(request);
       existing.responseMode = channel.responseMode;
+      existing.statusMessageTs = undefined;
       existing.lastUpdatedAt = isoNow();
       await this.sessionStore.put(existing);
       this.sessionTargets.set(sessionKey, { ...channel, threadTs: event.threadTs });
@@ -88,14 +90,19 @@ export class SlackSessionRuntime {
     };
 
     const activeAgent: AgentName = next.kind === 'escalation' ? 'architect-agent' : state.activeAgent || 'senior-agent';
-    const acpSessionId = await this.acpManager.ensureSession(
+    const ensureResult = await this.acpManager.ensureSession(
       sessionKey,
       state.acpSessionId || undefined,
       activeAgent
     );
+    const acpSessionId = ensureResult.sessionId;
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
     this.sessionBuffers.set(acpSessionId, '');
     this.acpSessionIndex.set(acpSessionId, sessionKey);
+
+    const sessionNotice = ensureResult.fallbackFromLoad
+      ? 'Note: I could not restore the prior ACP session, so I started a new session for this reply.'
+      : undefined;
 
     await this.sessionStore.put({
       ...state,
@@ -103,6 +110,7 @@ export class SlackSessionRuntime {
       activeAgent,
       inflight: true,
       statusMessageTs,
+      sessionNotice,
       lastUpdatedAt: isoNow(),
     });
 
@@ -133,53 +141,57 @@ export class SlackSessionRuntime {
   }
 
   private async handleAcpEvent(event: AcpEvent): Promise<void> {
-    console.error('[DIAG] handleAcpEvent received', JSON.stringify({
-      sessionId: event.sessionId,
-      type: event.type,
-      hasText: Boolean(event.text),
-      hasError: Boolean(event.error),
-    }));
-
-    const state = await this.findStateByAcpSessionId(event.sessionId);
-    if (!state) {
-      console.error('[DIAG] handleAcpEvent state-miss', JSON.stringify({
+    await this.withAcpEventLock(event.sessionId, async () => {
+      console.error('[DIAG] handleAcpEvent received', JSON.stringify({
         sessionId: event.sessionId,
         type: event.type,
+        hasText: Boolean(event.text),
+        hasError: Boolean(event.error),
       }));
-      return;
-    }
 
-    const target = this.sessionTargets.get(state.sessionKey);
-    if (!target || !state.statusMessageTs) {
-      return;
-    }
+      const state = await this.findStateByAcpSessionId(event.sessionId);
+      if (!state) {
+        console.error('[DIAG] handleAcpEvent state-miss', JSON.stringify({
+          sessionId: event.sessionId,
+          type: event.type,
+        }));
+        return;
+      }
 
-    if (event.type === 'delta') {
-      const nextBuffer = `${this.sessionBuffers.get(event.sessionId) ?? ''}${event.text ?? ''}`;
-      this.sessionBuffers.set(event.sessionId, nextBuffer);
-      await this.streamController.pushDelta(target, state.statusMessageTs, nextBuffer);
-      return;
-    }
+      const target = this.sessionTargets.get(state.sessionKey);
+      if (!target || !state.statusMessageTs) {
+        return;
+      }
 
-    if (event.type === 'error') {
-      await this.streamController.fail(target, state.statusMessageTs, event.error ?? 'Unknown ACP error');
-      await this.finishCurrent(state, false);
-      return;
-    }
+      if (event.type === 'delta') {
+        const nextBuffer = `${this.sessionBuffers.get(event.sessionId) ?? ''}${event.text ?? ''}`;
+        this.sessionBuffers.set(event.sessionId, nextBuffer);
+        await this.streamController.pushDelta(target, state.statusMessageTs, nextBuffer);
+        return;
+      }
 
-    if (event.type === 'final') {
-      const bufferedText = this.sessionBuffers.get(event.sessionId) ?? '';
-      const finalText = event.preserveBuffer ? bufferedText : `${bufferedText}${event.text ?? ''}`;
-      console.error('[DIAG] handleAcpEvent final', JSON.stringify({
-        sessionId: event.sessionId,
-        preserveBuffer: Boolean(event.preserveBuffer),
-        bufferedLength: bufferedText.length,
-        eventTextLength: (event.text ?? '').length,
-        finalLength: finalText.length,
-      }));
-      await this.streamController.complete(target, state.statusMessageTs, finalText);
-      await this.finishCurrent(state, true);
-    }
+      if (event.type === 'error') {
+        await this.streamController.fail(target, state.statusMessageTs, event.error ?? 'Unknown ACP error');
+        await this.finishCurrent(state, false);
+        return;
+      }
+
+      if (event.type === 'final') {
+        const bufferedText = this.sessionBuffers.get(event.sessionId) ?? '';
+        const finalText = event.preserveBuffer ? bufferedText : `${bufferedText}${event.text ?? ''}`;
+        const decoratedFinalText = state.sessionNotice ? `${state.sessionNotice}\n\n${finalText}` : finalText;
+        console.error('[DIAG] handleAcpEvent final', JSON.stringify({
+          sessionId: event.sessionId,
+          preserveBuffer: Boolean(event.preserveBuffer),
+          bufferedLength: bufferedText.length,
+          eventTextLength: (event.text ?? '').length,
+          finalLength: finalText.length,
+          hasSessionNotice: Boolean(state.sessionNotice),
+        }));
+        await this.streamController.complete(target, state.statusMessageTs, decoratedFinalText);
+        await this.finishCurrent(state, true);
+      }
+    });
   }
 
   private async finishCurrent(state: SessionState, preserveAgent: boolean): Promise<void> {
@@ -189,6 +201,7 @@ export class SlackSessionRuntime {
       inflight: false,
       queue: remaining,
       activeAgent: preserveAgent ? state.activeAgent : 'senior-agent',
+      sessionNotice: undefined,
       lastUpdatedAt: isoNow(),
     };
 
@@ -254,6 +267,26 @@ export class SlackSessionRuntime {
       release();
       if (this.perSessionLocks.get(sessionKey) === current) {
         this.perSessionLocks.delete(sessionKey);
+      }
+    }
+  }
+
+  private async withAcpEventLock(acpSessionId: string, work: () => Promise<void>): Promise<void> {
+    const previous = this.perAcpEventLocks.get(acpSessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    this.perAcpEventLocks.set(acpSessionId, previous.then(() => current));
+
+    await previous;
+    try {
+      await work();
+    } finally {
+      release();
+      if (this.perAcpEventLocks.get(acpSessionId) === current) {
+        this.perAcpEventLocks.delete(acpSessionId);
       }
     }
   }

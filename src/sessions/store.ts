@@ -42,6 +42,7 @@ function fromItem(sessionKey: string, item: Record<string, any>): SessionState {
     queue: item.queue?.S ? (JSON.parse(item.queue.S) as SessionState['queue']) : [],
     responseMode: toResponseMode(item.responseMode?.S),
     statusMessageTs: item.statusMessageTs?.S,
+    sessionNotice: item.sessionNotice?.S,
     lastUpdatedAt: item.lastUpdatedAt?.S ?? nowIso(),
   };
 }
@@ -160,6 +161,7 @@ export class DynamoDbSessionStore implements SessionStore {
           inflight: { BOOL: state.inflight },
           queue: { S: JSON.stringify(state.queue) },
           statusMessageTs: state.statusMessageTs ? { S: state.statusMessageTs } : { NULL: true },
+          ...(state.sessionNotice ? { sessionNotice: { S: state.sessionNotice } } : {}),
           lastUpdatedAt: { S: state.lastUpdatedAt },
           createdAt: { N: String(record.createdAt) },
           lastActiveAt: { N: String(record.lastActiveAt) },
