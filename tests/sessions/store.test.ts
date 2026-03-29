@@ -41,25 +41,27 @@ describe('session store', () => {
       kind: 'prompt' as const,
     }];
 
+    const item = {
+      pk: { S: 'THREAD#C1:1.2' },
+      acpSessionId: { S: 'acp-1' },
+      agentName: { S: 'architect-agent' },
+      responseMode: { S: 'publish_channel' },
+      inflight: { BOOL: true },
+      queue: { S: JSON.stringify(queue) },
+      statusMessageTs: { S: '999.1' },
+      lastUpdatedAt: { S: '2026-03-23T00:00:00.000Z' },
+    };
+
     const send = vi
       .fn()
       .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        Item: {
-          pk: { S: 'THREAD#C1:1.2' },
-          acpSessionId: { S: 'acp-1' },
-          agentName: { S: 'architect-agent' },
-          responseMode: { S: 'publish_channel' },
-          inflight: { BOOL: true },
-          queue: { S: JSON.stringify(queue) },
-          statusMessageTs: { S: '999.1' },
-          lastUpdatedAt: { S: '2026-03-23T00:00:00.000Z' },
-        },
-      });
+      .mockResolvedValueOnce({ Item: item })
+      .mockResolvedValueOnce({ Items: [item] });
 
     const store = new DynamoDbSessionStore({ tableName: 'sessions', ttlSeconds: 123, client: { send } as any });
     await store.put(makeState({ queue }));
     const loaded = await store.get('THREAD#C1:1.2');
+    const loadedByAcp = await store.getByAcpSessionId('acp-1');
 
     expect(send).toHaveBeenCalled();
     expect(loaded).toMatchObject({
@@ -68,5 +70,16 @@ describe('session store', () => {
       inflight: true,
       queue,
     });
+    expect(loadedByAcp).toMatchObject({ sessionKey: 'THREAD#C1:1.2', acpSessionId: 'acp-1' });
+  });
+
+  it('omits empty acpSessionId when writing dynamodb items so GSI keys stay valid', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const store = new DynamoDbSessionStore({ tableName: 'sessions', ttlSeconds: 123, client: { send } as any });
+
+    await store.put(makeState({ acpSessionId: '' }));
+
+    const command = send.mock.calls[0][0];
+    expect(command.input.Item.acpSessionId).toBeUndefined();
   });
 });

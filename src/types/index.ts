@@ -63,6 +63,7 @@ export interface SessionState {
   queue: SessionRequest[];
   responseMode: ResponseMode;
   statusMessageTs?: string;
+  sessionNotice?: string;
   lastUpdatedAt: string;
 }
 
@@ -202,4 +203,5 @@ export interface AcpEvent {
   type: 'started' | 'delta' | 'final' | 'error';
   text?: string;
   error?: string;
+  preserveBuffer?: boolean;
 }

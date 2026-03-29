@@ -40,6 +40,30 @@ export async function createSlackApp() {
   const streamController = new SlackStreamController(app.client as any);
   const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
 
+  let cleanedUp = false;
+  const cleanup = (reason: string) => {
+    console.error('[DIAG] app cleanup invoked', JSON.stringify({ reason, cleanedUp }));
+    if (cleanedUp) return;
+    cleanedUp = true;
+    acpManager.close();
+  };
+
+  process.on('beforeExit', (code) => {
+    console.error('[DIAG] process beforeExit', JSON.stringify({ code }));
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error('[DIAG] process uncaughtException', error);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('[DIAG] process unhandledRejection', reason);
+  });
+
+  process.once('SIGINT', () => cleanup('SIGINT'));
+  process.once('SIGTERM', () => cleanup('SIGTERM'));
+  process.once('exit', (code) => cleanup(`exit:${code}`));
+
   app.event('app_mention', async ({ event }) => {
     console.log('[DIAG] app_mention received:', JSON.stringify({ user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts }));
     const slackEvent = toSlackEvent(event as any, 'app_mention', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));

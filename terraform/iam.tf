@@ -46,10 +46,19 @@ resource "aws_iam_role_policy" "dynamodb" {
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-          "dynamodb:Query"
+          "dynamodb:DeleteItem"
         ]
         Resource = aws_dynamodb_table.sessions.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Query"
+        ]
+        Resource = [
+          aws_dynamodb_table.sessions.arn,
+          "${aws_dynamodb_table.sessions.arn}/index/acpSessionId-index"
+        ]
       }
     ]
   })

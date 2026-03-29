@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AcpProcessManager } from '../../src/acp/process-manager';
 import type { AcpEvent } from '../../src/types';
 
 class FakeTransport {
   public initializeCalls = 0;
   public createSessionCalls = 0;
+  public closeCalls = 0;
   public prompts: Array<{ sessionId: string; prompt: Array<{ type: 'text'; text: string }> }> = [];
   private readonly listeners = new Set<(event: AcpEvent) => void>();
 
@@ -17,12 +18,20 @@ class FakeTransport {
     return `acp-${this.createSessionCalls}`;
   }
 
+  async loadSession(sessionId: string): Promise<string> {
+    return sessionId;
+  }
+
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
     this.prompts.push({ sessionId, prompt });
   }
 
   onEvent(listener: (event: AcpEvent) => void): void {
     this.listeners.add(listener);
+  }
+
+  close(): void {
+    this.closeCalls += 1;
   }
 
   emit(event: AcpEvent): void {
@@ -40,8 +49,16 @@ describe('AcpProcessManager', () => {
     const first = await manager.ensureSession('THREAD#C1:123.456');
     const second = await manager.ensureSession('THREAD#C1:123.456');
 
-    expect(first).toBe('acp-1');
-    expect(second).toBe('acp-1');
+    expect(first).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
+    expect(second).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: true,
+      fallbackFromLoad: false,
+    });
     expect(transport.createSessionCalls).toBe(1);
   });
 
@@ -61,8 +78,49 @@ describe('AcpProcessManager', () => {
 
     resolveCreate('acp-1');
 
-    await expect(first).resolves.toBe('acp-1');
-    await expect(second).resolves.toBe('acp-1');
+    await expect(first).resolves.toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
+    await expect(second).resolves.toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
+    expect(transport.createSessionCalls).toBe(1);
+  });
+
+  it('restores an existing ACP session via session/load when a prior session id is present', async () => {
+    const transport = new FakeTransport();
+    transport.loadSession = vi.fn().mockResolvedValue('acp-restored');
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    const result = await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    expect(transport.loadSession).toHaveBeenCalledWith('acp-old');
+    expect(result).toMatchObject({
+      sessionId: 'acp-restored',
+      resumed: true,
+      fallbackFromLoad: false,
+    });
+    expect(transport.createSessionCalls).toBe(0);
+  });
+
+  it('falls back to session/new when session/load fails for an existing ACP session id', async () => {
+    const transport = new FakeTransport();
+    transport.loadSession = vi.fn().mockRejectedValue(new Error('restore failed'));
+    const manager = new AcpProcessManager({ transport: transport as any });
+    (manager as any).recycleTransport = vi.fn();
+
+    const result = await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    expect(transport.loadSession).toHaveBeenCalledWith('acp-old');
+    expect(result).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: true,
+    });
     expect(transport.createSessionCalls).toBe(1);
   });
 
@@ -99,5 +157,14 @@ describe('AcpProcessManager', () => {
         prompt: [{ type: 'text', text: 'hello from slack' }],
       },
     ]);
+  });
+
+  it('closes the underlying transport', () => {
+    const transport = new FakeTransport();
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    manager.close();
+
+    expect(transport.closeCalls).toBe(1);
   });
 });

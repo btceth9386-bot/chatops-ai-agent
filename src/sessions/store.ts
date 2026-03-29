@@ -1,8 +1,9 @@
-import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import type { AgentName, ResponseMode, SessionRecord, SessionState } from '../types';
 
 export interface SessionStore {
   get(sessionKey: string): Promise<SessionState | null>;
+  getByAcpSessionId(acpSessionId: string): Promise<SessionState | null>;
   put(state: SessionState): Promise<void>;
   touch(sessionKey: string, updates: Partial<SessionState>): Promise<SessionState | null>;
 }
@@ -14,6 +15,7 @@ export interface SessionStoreOptions {
 }
 
 const DEFAULT_TTL_SECONDS = 90 * 24 * 60 * 60;
+const ACP_SESSION_ID_INDEX_NAME = 'acpSessionId-index';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -31,11 +33,34 @@ function toResponseMode(value: string | undefined): ResponseMode {
   return value === 'publish_channel' ? 'publish_channel' : 'thread_reply';
 }
 
+function fromItem(sessionKey: string, item: Record<string, any>): SessionState {
+  return {
+    sessionKey: item.pk?.S ?? sessionKey,
+    acpSessionId: item.acpSessionId?.S ?? '',
+    activeAgent: toAgentName(item.agentName?.S),
+    inflight: item.inflight?.BOOL ?? false,
+    queue: item.queue?.S ? (JSON.parse(item.queue.S) as SessionState['queue']) : [],
+    responseMode: toResponseMode(item.responseMode?.S),
+    statusMessageTs: item.statusMessageTs?.S,
+    sessionNotice: item.sessionNotice?.S,
+    lastUpdatedAt: item.lastUpdatedAt?.S ?? nowIso(),
+  };
+}
+
 export class InMemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionState>();
 
   async get(sessionKey: string): Promise<SessionState | null> {
     return this.sessions.get(sessionKey) ?? null;
+  }
+
+  async getByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
+    for (const state of this.sessions.values()) {
+      if (state.acpSessionId === acpSessionId) {
+        return state;
+      }
+    }
+    return null;
   }
 
   async put(state: SessionState): Promise<void> {
@@ -81,16 +106,38 @@ export class DynamoDbSessionStore implements SessionStore {
       return null;
     }
 
-    return {
-      sessionKey: result.Item.pk.S ?? sessionKey,
-      acpSessionId: result.Item.acpSessionId.S ?? '',
-      activeAgent: toAgentName(result.Item.agentName.S),
-      inflight: result.Item.inflight?.BOOL ?? false,
-      queue: result.Item.queue?.S ? (JSON.parse(result.Item.queue.S) as SessionState['queue']) : [],
-      responseMode: toResponseMode(result.Item.responseMode?.S),
-      statusMessageTs: result.Item.statusMessageTs?.S,
-      lastUpdatedAt: result.Item.lastUpdatedAt?.S ?? nowIso(),
-    };
+    return fromItem(sessionKey, result.Item as Record<string, any>);
+  }
+
+  async getByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
+    console.error('[DIAG] sessionStore.getByAcpSessionId:start', JSON.stringify({
+      acpSessionId,
+      indexName: ACP_SESSION_ID_INDEX_NAME,
+    }));
+
+    const result = await this.client.send(
+      new QueryCommand({
+        TableName: this.options.tableName,
+        IndexName: ACP_SESSION_ID_INDEX_NAME,
+        KeyConditionExpression: 'acpSessionId = :acpSessionId',
+        ExpressionAttributeValues: {
+          ':acpSessionId': { S: acpSessionId },
+        },
+        Limit: 1,
+      })
+    );
+
+    const item = result.Items?.[0];
+    if (!item) {
+      console.error('[DIAG] sessionStore.getByAcpSessionId:miss', JSON.stringify({ acpSessionId }));
+      return null;
+    }
+
+    console.error('[DIAG] sessionStore.getByAcpSessionId:hit', JSON.stringify({
+      acpSessionId,
+      sessionKey: item.pk?.S ?? '',
+    }));
+    return fromItem(item.pk?.S ?? '', item as Record<string, any>);
   }
 
   async put(state: SessionState): Promise<void> {
@@ -108,12 +155,13 @@ export class DynamoDbSessionStore implements SessionStore {
         TableName: this.options.tableName,
         Item: {
           pk: { S: record.pk },
-          acpSessionId: { S: record.acpSessionId },
+          ...(record.acpSessionId ? { acpSessionId: { S: record.acpSessionId } } : {}),
           agentName: { S: record.agentName },
           responseMode: { S: state.responseMode },
           inflight: { BOOL: state.inflight },
           queue: { S: JSON.stringify(state.queue) },
           statusMessageTs: state.statusMessageTs ? { S: state.statusMessageTs } : { NULL: true },
+          ...(state.sessionNotice ? { sessionNotice: { S: state.sessionNotice } } : {}),
           lastUpdatedAt: { S: state.lastUpdatedAt },
           createdAt: { N: String(record.createdAt) },
           lastActiveAt: { N: String(record.lastActiveAt) },

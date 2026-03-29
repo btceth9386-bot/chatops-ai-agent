@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
+    "restart:clean": "./scripts/restart-clean.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },
