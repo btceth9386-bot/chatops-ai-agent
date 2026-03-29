@@ -6,7 +6,7 @@ import type { AcpEvent, AcpPromptPayload, AgentName } from '../types';
 const JSON_RPC_VERSION = '2.0';
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_REQUEST_TIMEOUT_MS = 60_000;
-const ACP_LOAD_TIMEOUT_MS = 8_000;
+const ACP_LOAD_TIMEOUT_MS = 30_000;
 
 type JsonRpcId = number;
 
@@ -167,6 +167,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const result = await this.sendRequest('session/load', {
       sessionId,
       cwd: process.cwd(),
+      mcpServers: [],
     });
 
     const loadedSessionId = asString(asRecord(result)?.sessionId) ?? sessionId;
@@ -532,10 +533,12 @@ export class AcpProcessManager {
 
     const ensurePromise = (async () => {
       if (existingSessionId) {
+        const loadStartedAt = Date.now();
         console.error('[DIAG][ACP ensureSession] load-attempt', JSON.stringify({
           sessionKey,
           existingSessionId,
           agent,
+          timeoutMs: ACP_LOAD_TIMEOUT_MS,
         }));
         try {
           const restoredSessionId = await Promise.race<string>([
@@ -549,6 +552,7 @@ export class AcpProcessManager {
             existingSessionId,
             restoredSessionId,
             reusedSameId: restoredSessionId === existingSessionId,
+            elapsedMs: Date.now() - loadStartedAt,
           }));
           this.sessions.set(sessionKey, restoredSessionId);
           resumed = true;
@@ -560,6 +564,7 @@ export class AcpProcessManager {
             sessionKey,
             existingSessionId,
             error: errorMessage,
+            elapsedMs: Date.now() - loadStartedAt,
           }));
           this.recycleTransport(`load-failed:${errorMessage}`);
           console.error('[DIAG][ACP ensureSession] fallback-session-new', JSON.stringify({
@@ -593,7 +598,8 @@ export class AcpProcessManager {
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
-    this.sessions.set(`${payload.metadata.channelId}:${payload.metadata.threadTs}`, payload.sessionId);
+    const sessionKey = `THREAD#${payload.metadata.channelId}:${payload.metadata.threadTs}`;
+    this.sessions.set(sessionKey, payload.sessionId);
     await this.transport.prompt(payload.sessionId, payload.prompt);
   }
 
