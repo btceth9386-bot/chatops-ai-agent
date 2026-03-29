@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AcpProcessManager } from '../../src/acp/process-manager';
 import type { AcpEvent } from '../../src/types';
 
@@ -16,6 +16,10 @@ class FakeTransport {
   async createSession(): Promise<string> {
     this.createSessionCalls += 1;
     return `acp-${this.createSessionCalls}`;
+  }
+
+  async loadSession(sessionId: string): Promise<string> {
+    return sessionId;
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -83,6 +87,39 @@ describe('AcpProcessManager', () => {
       sessionId: 'acp-1',
       resumed: false,
       fallbackFromLoad: false,
+    });
+    expect(transport.createSessionCalls).toBe(1);
+  });
+
+  it('restores an existing ACP session via session/load when a prior session id is present', async () => {
+    const transport = new FakeTransport();
+    transport.loadSession = vi.fn().mockResolvedValue('acp-restored');
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    const result = await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    expect(transport.loadSession).toHaveBeenCalledWith('acp-old');
+    expect(result).toMatchObject({
+      sessionId: 'acp-restored',
+      resumed: true,
+      fallbackFromLoad: false,
+    });
+    expect(transport.createSessionCalls).toBe(0);
+  });
+
+  it('falls back to session/new when session/load fails for an existing ACP session id', async () => {
+    const transport = new FakeTransport();
+    transport.loadSession = vi.fn().mockRejectedValue(new Error('restore failed'));
+    const manager = new AcpProcessManager({ transport: transport as any });
+    (manager as any).recycleTransport = vi.fn();
+
+    const result = await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    expect(transport.loadSession).toHaveBeenCalledWith('acp-old');
+    expect(result).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: true,
     });
     expect(transport.createSessionCalls).toBe(1);
   });

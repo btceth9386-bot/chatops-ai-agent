@@ -124,6 +124,38 @@ describe('SlackSessionRuntime', () => {
     expect(stream.updates).toContain('FINAL:partial done');
   });
 
+  it('includes a user-facing notice when ACP session restore falls back to a new session', async () => {
+    const acpManager = new FakeAcpManager();
+    acpManager.ensureSession = vi.fn().mockResolvedValue({
+      sessionId: 'acp-2',
+      resumed: false,
+      fallbackFromLoad: true,
+    });
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await store.put({
+      sessionKey: 'THREAD#C1:123.456',
+      acpSessionId: 'acp-old',
+      activeAgent: 'senior-agent',
+      inflight: false,
+      queue: [],
+      responseMode: 'thread_reply',
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    await runtime.enqueue(event('resume please'), channel, 'prompt');
+    acpManager.emit({ sessionId: 'acp-2', type: 'final', text: 'fresh reply' });
+
+    await flush();
+
+    expect(stream.updates).toContain(
+      'FINAL:Note: I could not restore the prior ACP session, so I started a new session for this reply.\n\nfresh reply'
+    );
+  });
+
   it('marks Slack message as failed when ACP errors', async () => {
     const acpManager = new FakeAcpManager();
     const store = new InMemorySessionStore();
