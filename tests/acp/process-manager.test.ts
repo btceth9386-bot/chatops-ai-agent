@@ -45,8 +45,16 @@ describe('AcpProcessManager', () => {
     const first = await manager.ensureSession('THREAD#C1:123.456');
     const second = await manager.ensureSession('THREAD#C1:123.456');
 
-    expect(first).toBe('acp-1');
-    expect(second).toBe('acp-1');
+    expect(first).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
+    expect(second).toMatchObject({
+      sessionId: 'acp-1',
+      resumed: true,
+      fallbackFromLoad: false,
+    });
     expect(transport.createSessionCalls).toBe(1);
   });
 
@@ -66,8 +74,16 @@ describe('AcpProcessManager', () => {
 
     resolveCreate('acp-1');
 
-    await expect(first).resolves.toBe('acp-1');
-    await expect(second).resolves.toBe('acp-1');
+    await expect(first).resolves.toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
+    await expect(second).resolves.toMatchObject({
+      sessionId: 'acp-1',
+      resumed: false,
+      fallbackFromLoad: false,
+    });
     expect(transport.createSessionCalls).toBe(1);
   });
 

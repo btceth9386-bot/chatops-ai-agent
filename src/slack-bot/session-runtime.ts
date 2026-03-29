@@ -65,7 +65,9 @@ export class SlackSessionRuntime {
 
       existing.queue.push(request);
       existing.responseMode = channel.responseMode;
-      existing.statusMessageTs = undefined;
+      if (!existing.inflight) {
+        existing.statusMessageTs = undefined;
+      }
       existing.lastUpdatedAt = isoNow();
       await this.sessionStore.put(existing);
       this.sessionTargets.set(sessionKey, { ...channel, threadTs: event.threadTs });

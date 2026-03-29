@@ -6,6 +6,7 @@ import type { AcpEvent, AcpPromptPayload, SlackEvent } from '../../src/types';
 class FakeAcpManager {
   private readonly listeners = new Set<(event: AcpEvent) => void>();
   public readonly prompts: AcpPromptPayload[] = [];
+  private readonly sessions = new Map<string, string>();
   private sessionCounter = 0;
 
   onEvent(listener: (event: AcpEvent) => void): () => void {
@@ -13,8 +14,24 @@ class FakeAcpManager {
     return () => this.listeners.delete(listener);
   }
 
-  async ensureSession(_sessionKey: string, existingSessionId?: string): Promise<string> {
-    return existingSessionId ?? `acp-${++this.sessionCounter}`;
+  hasSession(sessionKey: string, expectedSessionId?: string): boolean {
+    const current = this.sessions.get(sessionKey);
+    if (!current) {
+      return false;
+    }
+
+    return expectedSessionId ? current === expectedSessionId : true;
+  }
+
+  async ensureSession(sessionKey: string, existingSessionId?: string): Promise<{ sessionId: string; resumed: boolean; fallbackFromLoad: boolean }> {
+    const sessionId = existingSessionId ?? this.sessions.get(sessionKey) ?? `acp-${++this.sessionCounter}`;
+    const resumed = Boolean(existingSessionId || this.sessions.get(sessionKey));
+    this.sessions.set(sessionKey, sessionId);
+    return {
+      sessionId,
+      resumed,
+      fallbackFromLoad: false,
+    };
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
@@ -94,6 +111,7 @@ describe('SlackSessionRuntime', () => {
     acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'partial ' });
     acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'done' });
 
+    await flush();
     await flush();
 
     expect(acpManager.prompts).toHaveLength(2);
