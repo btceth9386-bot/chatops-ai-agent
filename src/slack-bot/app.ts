@@ -1,5 +1,6 @@
 import { App } from '@slack/bolt';
 import { resolve } from 'node:path';
+import { loadAppConfig } from '../config/app-config';
 import { ConfigurationManager } from '../config/manager';
 import { CloudWatchLogger } from '../logging/cloudwatch';
 import { toSlackEvent, handleSlackEvent } from './events';
@@ -18,10 +19,11 @@ function requiredEnv(name: string): string {
 }
 
 export async function createSlackApp() {
-  const configPath = resolve(process.env.CHANNEL_CONFIG_PATH ?? 'src/config/channels.json');
+  const appConfig = loadAppConfig();
+  const configPath = resolve(appConfig.channelConfigPath);
   const configManager = new ConfigurationManager({ channelsPath: configPath });
   const loadedConfig = await configManager.load();
-  const logger = new CloudWatchLogger(process.env.CLOUDWATCH_LOG_GROUP, process.env.CLOUDWATCH_LOG_STREAM);
+  const logger = new CloudWatchLogger(appConfig.cloudwatch.logGroup, appConfig.cloudwatch.logStream);
   const routing = new RoutingLayer(loadedConfig);
 
   configManager.watch((nextConfig) => routing.updateConfig(nextConfig));
@@ -34,9 +36,9 @@ export async function createSlackApp() {
   });
 
   const sessionStore = createSessionStore({
-    tableName: process.env.DYNAMODB_TABLE_NAME,
+    tableName: appConfig.aws.dynamoTableName,
   });
-  const acpManager = new AcpProcessManager();
+  const acpManager = new AcpProcessManager({ command: appConfig.acpCommand });
   const streamController = new SlackStreamController(app.client as any);
   const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
 
@@ -66,7 +68,7 @@ export async function createSlackApp() {
 
   app.event('app_mention', async ({ event }) => {
     console.log('[DIAG] app_mention received:', JSON.stringify({ user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts }));
-    const slackEvent = toSlackEvent(event as any, 'app_mention', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));
+    const slackEvent = toSlackEvent(event as any, 'app_mention', appConfig.maxMessageLength);
     await handleSlackEvent(slackEvent, routing, logger, runtime);
     console.log('[DIAG] app_mention handleSlackEvent completed');
   });
@@ -80,7 +82,7 @@ export async function createSlackApp() {
       return;
     }
 
-    const slackEvent = toSlackEvent(event as any, 'message', Number(process.env.MAX_MESSAGE_LENGTH ?? 10000));
+    const slackEvent = toSlackEvent(event as any, 'message', appConfig.maxMessageLength);
     await handleSlackEvent(slackEvent, routing, logger, runtime);
   });
 
@@ -92,8 +94,9 @@ export async function createSlackApp() {
   return { app, configManager, logger, routing, runtime, sessionStore, acpManager };
 }
 
-export async function startSlackApp(port = Number(process.env.PORT ?? 3000)) {
+export async function startSlackApp(port?: number) {
+  const appConfig = loadAppConfig();
   const { app } = await createSlackApp();
-  await app.start(port);
+  await app.start(port ?? appConfig.port);
   return app;
 }

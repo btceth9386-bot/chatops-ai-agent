@@ -1,34 +1,28 @@
 {
   "channels": [
     {
-      "channelId": "C_AUTO_INVESTIGATION_EXAMPLE",
+      "channelId": "C_YOUR_MENTION_CHANNEL",
+      "mode": "mention_based",
+      "responseMode": "thread_reply",
+      "enabled": true
+    },
+    {
+      "channelId": "C_YOUR_AUTO_CHANNEL",
       "mode": "auto_investigation",
       "responseMode": "thread_reply",
       "enabled": true
     },
     {
-      "channelId": "C0ANG9N9MAM",
-      "mode": "mention_based",
-      "responseMode": "thread_reply",
-      "enabled": true
-    },
-    {
-      "channelId": "C0AP7KT3807",
-      "mode": "mention_based",
-      "responseMode": "thread_reply",
-      "enabled": true
-    },
-    {
-      "channelId": "C_LEARNING_EXAMPLE",
+      "channelId": "C_YOUR_LEARNING_CHANNEL",
       "mode": "learning",
       "responseMode": "thread_reply",
       "enabled": true
     },
     {
-      "channelId": "C_PUBLISH_CHANNEL_EXAMPLE",
+      "channelId": "C_YOUR_PUBLISH_CHANNEL",
       "mode": "auto_investigation",
       "responseMode": "publish_channel",
-      "publishChannelId": "C_INCIDENT_SUMMARY_EXAMPLE",
+      "publishChannelId": "C_YOUR_SUMMARY_CHANNEL",
       "enabled": true
     }
   ],

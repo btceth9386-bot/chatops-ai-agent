@@ -1,0 +1,14 @@
+{
+  "port": 3000,
+  "maxMessageLength": 10000,
+  "channelConfigPath": "src/config/channels.json",
+  "cloudwatch": {
+    "logGroup": "/chatops-ai-agent/app",
+    "logStream": "slack-bot"
+  },
+  "aws": {
+    "region": "us-east-1",
+    "dynamoTableName": "slack-kiro-sessions"
+  },
+  "acpCommand": "kiro-cli acp"
+}

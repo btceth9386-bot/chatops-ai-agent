@@ -20,21 +20,13 @@ Phase 1 foundation for a Slack + ACP based ChatOps bot.
 
 ## Configuration strategy
 
-Use both:
+Three layers:
 
-- `src/config/channels.json` for non-secret operational config
-  - channel IDs
-  - routing mode
-  - response mode
-  - publish target channel ID
-- environment variables for secrets and environment-specific runtime values
-  - Slack tokens
-  - signing secret
-  - CloudWatch log group/stream
-  - ACP command
-  - optional DynamoDB session table name
+- `.env` — secrets only (Slack tokens, signing secret). Never committed.
+- `src/config/app.json` — non-secret runtime config (port, CloudWatch, DynamoDB table, ACP command, AWS region). Committed to git.
+- `src/config/channels.json` — channel routing policy (channel IDs, modes, response modes). Gitignored because channel IDs are workspace-specific. Copy `channels.json.example` to get started.
 
-This split keeps channel policy reviewable in git while keeping secrets out of the repo.
+Any value in `app.json` can be overridden by setting the corresponding environment variable (see `.env.example` for the full list).
 
 ## Slack app setup
 
