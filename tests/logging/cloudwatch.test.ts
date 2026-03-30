@@ -8,8 +8,9 @@ describe('CloudWatchLogger', () => {
 
     await logger.logError('boom', new Error('x'), { requestId: 'r1' });
 
-    expect(send).toHaveBeenCalledTimes(1);
-    const command = send.mock.calls[0][0];
+    expect(send).toHaveBeenCalledTimes(2);
+    // First call: CreateLogStream, second call: PutLogEvents
+    const command = send.mock.calls[1][0];
     expect(command.input.logGroupName).toBe('/group');
     expect(command.input.logStreamName).toBe('stream');
     expect(command.input.logEvents).toHaveLength(1);

@@ -13,6 +13,12 @@
       "enabled": true
     },
     {
+      "channelId": "C0AP7KT3807",
+      "mode": "mention_based",
+      "responseMode": "thread_reply",
+      "enabled": true
+    },
+    {
       "channelId": "C_LEARNING_EXAMPLE",
       "mode": "learning",
       "responseMode": "thread_reply",
