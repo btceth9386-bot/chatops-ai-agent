@@ -1,3 +1,6 @@
+import { config } from 'dotenv';
+config(); // loads .env if it exists, no-op otherwise
+
 import { startSlackApp } from './slack-bot/app';
 
 startSlackApp()

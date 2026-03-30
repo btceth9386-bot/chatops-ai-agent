@@ -16,7 +16,7 @@ export interface AppConfig {
   acpCommand: string;
 }
 
-const DEFAULT_PATH = resolve(__dirname, 'app.json');
+const DEFAULT_PATH = resolve(__dirname, '..', '..', '..', 'src', 'config', 'app.json');
 
 export function loadAppConfig(path = DEFAULT_PATH): AppConfig {
   const raw = JSON.parse(readFileSync(path, 'utf-8'));
