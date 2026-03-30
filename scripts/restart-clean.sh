@@ -53,13 +53,5 @@ if [[ -n "$NODE_LEFT$ACP_WRAPPER_LEFT$ACP_CHILD_LEFT" ]]; then
   exit 1
 fi
 
-if [[ -f .env ]]; then
-  log 'loading .env'
-  set -a
-  # shellcheck disable=SC1091
-  source ./.env
-  set +a
-fi
-
 log 'starting chatops-ai-agent'
 exec npm start
