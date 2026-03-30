@@ -106,6 +106,8 @@ npm run restart:clean
 
 If you prefer, you can still export variables from your shell and run `npm start` directly, but for repeated local debugging the clean restart script is safer.
 
+The app uses `dotenv` to auto-load `.env` at startup, so manual `source .env` is no longer required.
+
 ## Channel config examples
 
 `thread_reply` means reply inside the same Slack thread.
