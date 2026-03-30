@@ -1,5 +1,6 @@
 import {
   CloudWatchLogsClient,
+  CreateLogStreamCommand,
   PutLogEventsCommand,
   InputLogEvent,
 } from '@aws-sdk/client-cloudwatch-logs';
@@ -9,13 +10,17 @@ type CloudWatchClientLike = Pick<CloudWatchLogsClient, 'send'>;
 
 export class CloudWatchLogger {
   private readonly client: CloudWatchClientLike;
+  private cloudwatchUnavailable = false;
+  private streamEnsured = false;
 
   constructor(
     private readonly logGroupName = process.env.CLOUDWATCH_LOG_GROUP ?? '/chatops-ai-agent',
     private readonly logStreamName = process.env.CLOUDWATCH_LOG_STREAM ?? 'slack-bot',
     client?: CloudWatchClientLike
   ) {
-    this.client = client ?? new CloudWatchLogsClient({});
+    this.client = client ?? new CloudWatchLogsClient({
+      region: process.env.AWS_REGION || 'us-east-1',
+    });
   }
 
   async logError(message: string, error?: Error, requestContext?: Record<string, unknown>): Promise<void> {
@@ -46,13 +51,35 @@ export class CloudWatchLogger {
     });
   }
 
+  private async ensureStream(): Promise<void> {
+    if (this.streamEnsured) return;
+    try {
+      await this.client.send(
+        new CreateLogStreamCommand({
+          logGroupName: this.logGroupName,
+          logStreamName: this.logStreamName,
+        })
+      );
+    } catch (error: any) {
+      // ResourceAlreadyExistsException is fine — stream already exists
+      if (error.name !== 'ResourceAlreadyExistsException') throw error;
+    }
+    this.streamEnsured = true;
+  }
+
   private async send(entry: ErrorLogEntry): Promise<void> {
+    if (this.cloudwatchUnavailable) {
+      console.error(`[CloudWatchLogger] ${entry.level}: ${entry.message}`);
+      return;
+    }
+
     const event: InputLogEvent = {
       timestamp: Date.now(),
       message: JSON.stringify(entry),
     };
 
     try {
+      await this.ensureStream();
       await this.client.send(
         new PutLogEventsCommand({
           logGroupName: this.logGroupName,
@@ -61,10 +88,10 @@ export class CloudWatchLogger {
         })
       );
     } catch (error) {
-      console.error('[CloudWatchLogger] failed to send log event, fallback to stderr', {
-        entry,
-        error,
-      });
+      this.cloudwatchUnavailable = true;
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[CloudWatchLogger] CloudWatch unavailable (${msg}), falling back to stderr for future logs`);
+      console.error(`[CloudWatchLogger] ${entry.level}: ${entry.message}`);
     }
   }
 }

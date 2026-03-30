@@ -124,6 +124,7 @@ export class SlackSessionRuntime {
       agent: activeAgent,
     });
 
+    this.sessionBuffers.set(acpSessionId, '');
     await this.acpManager.sendPrompt({
       sessionId: acpSessionId,
       prompt: [

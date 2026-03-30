@@ -124,6 +124,50 @@ describe('AcpProcessManager', () => {
     expect(transport.createSessionCalls).toBe(1);
   });
 
+  it('suppresses session/update events emitted during session/load (history replay)', async () => {
+    const transport = new FakeTransport();
+    const events: AcpEvent[] = [];
+
+    // Simulate: loadSession emits deltas during load (ACP history replay)
+    transport.loadSession = async (sessionId: string) => {
+      transport.emit({ sessionId, type: 'delta', text: 'replayed user msg' });
+      transport.emit({ sessionId, type: 'delta', text: 'replayed agent msg' });
+      return sessionId;
+    };
+
+    const manager = new AcpProcessManager({ transport: transport as any });
+    manager.onEvent((e) => events.push(e));
+
+    await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    // Events emitted during load should have been suppressed
+    // Only the 'started' event from ensureSession should come through
+    const deltasDuringLoad = events.filter((e) => e.type === 'delta');
+    expect(deltasDuringLoad).toHaveLength(0);
+  });
+
+  it('allows delta events after session/load completes', async () => {
+    const transport = new FakeTransport();
+    const events: AcpEvent[] = [];
+
+    transport.loadSession = async (sessionId: string) => {
+      transport.emit({ sessionId, type: 'delta', text: 'replayed' });
+      return sessionId;
+    };
+
+    const manager = new AcpProcessManager({ transport: transport as any });
+    manager.onEvent((e) => events.push(e));
+
+    await manager.ensureSession('THREAD#C1:123.456', 'acp-old', 'senior-agent');
+
+    // After load completes, new deltas should come through
+    transport.emit({ sessionId: 'acp-old', type: 'delta', text: 'real response' });
+
+    const deltas = events.filter((e) => e.type === 'delta');
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0].text).toBe('real response');
+  });
+
   it('forwards transport events to listeners', async () => {
     const transport = new FakeTransport();
     const manager = new AcpProcessManager({ transport: transport as any });

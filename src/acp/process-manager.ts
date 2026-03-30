@@ -83,6 +83,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   private buffer = '';
   private nextId = 1;
   private initialized = false;
+  private suppressEvents = false;
   private readonly pending = new Map<JsonRpcId, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
@@ -164,11 +165,13 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       sessionId,
       cwd: process.cwd(),
     }));
+    this.suppressEvents = true;
     const result = await this.sendRequest('session/load', {
       sessionId,
       cwd: process.cwd(),
       mcpServers: [],
     });
+    this.suppressEvents = false;
 
     const loadedSessionId = asString(asRecord(result)?.sessionId) ?? sessionId;
     console.error('[DIAG][ACP transport] session/load response', JSON.stringify({
@@ -348,6 +351,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   }
 
   private emitSessionUpdate(params: unknown): void {
+    if (this.suppressEvents) return;
     const root = asRecord(params);
     const sessionId = asString(root?.sessionId) ?? 'unknown';
     const update = asRecord(root?.update);
@@ -485,6 +489,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 export class AcpProcessManager {
   private readonly sessions = new Map<string, string>();
   private readonly sessionPromises = new Map<string, Promise<string>>();
+  private suppressEvents = false;
   private transport: AcpTransport;
   private readonly listeners = new Set<(event: AcpEvent) => void>();
   private readonly command: string;
@@ -541,12 +546,14 @@ export class AcpProcessManager {
           timeoutMs: ACP_LOAD_TIMEOUT_MS,
         }));
         try {
+          this.suppressEvents = true;
           const restoredSessionId = await Promise.race<string>([
             this.transport.loadSession(existingSessionId),
             new Promise<string>((_, reject) => {
               setTimeout(() => reject(new Error(`ACP session/load timed out after ${ACP_LOAD_TIMEOUT_MS}ms`)), ACP_LOAD_TIMEOUT_MS);
             }),
           ]);
+          this.suppressEvents = false;
           console.error('[DIAG][ACP ensureSession] load-success', JSON.stringify({
             sessionKey,
             existingSessionId,
@@ -558,6 +565,7 @@ export class AcpProcessManager {
           resumed = true;
           return restoredSessionId;
         } catch (error) {
+          this.suppressEvents = false;
           fallbackFromLoad = true;
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error('[DIAG][ACP ensureSession] load-failed', JSON.stringify({
@@ -616,6 +624,7 @@ export class AcpProcessManager {
   }
 
   private emit(event: AcpEvent): void {
+    if (this.suppressEvents) return;
     for (const listener of this.listeners) {
       listener(event);
     }
