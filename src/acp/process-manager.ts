@@ -32,6 +32,7 @@ interface AcpTransport {
   initialize(): Promise<void>;
   createSession(agent?: AgentName): Promise<string>;
   loadSession(sessionId: string): Promise<string>;
+  switchAgent(sessionId: string, agent: AgentName): Promise<void>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
   onEvent(listener: (event: AcpEvent) => void): void;
   close(): void;
@@ -174,6 +175,25 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     });
     this.emitAcpEvent({ sessionId: loadedSessionId, type: 'started' });
     return loadedSessionId;
+  }
+
+  async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
+    await this.initialize();
+    log.info('switchAgent', { sessionId, agent });
+    try {
+      await this.sendRequest('session/set_mode', { sessionId, agentName: agent });
+      log.info('switchAgent success via session/set_mode', { sessionId, agent });
+    } catch (err) {
+      log.warn('session/set_mode failed, trying command fallback', {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await this.sendRequest('_kiro.dev/commands/execute', {
+        sessionId,
+        command: `/agent swap ${agent}`,
+      });
+      log.info('switchAgent success via command fallback', { sessionId, agent });
+    }
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -549,6 +569,10 @@ export class AcpProcessManager {
     this.sessionPromises.set(sessionKey, ensurePromise);
     const sessionId = await ensurePromise;
     return { sessionId, resumed, fallbackFromLoad };
+  }
+
+  async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
+    await this.transport.switchAgent(sessionId, agent);
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {

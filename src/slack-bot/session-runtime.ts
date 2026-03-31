@@ -101,6 +101,18 @@ export class SlackSessionRuntime {
       activeAgent
     );
     const acpSessionId = ensureResult.sessionId;
+
+    if (next.kind === 'escalation' && ensureResult.resumed && state.activeAgent !== 'architect-agent') {
+      try {
+        await this.acpManager.switchAgent(acpSessionId, 'architect-agent');
+      } catch (err) {
+        log.warn('agent switch failed, continuing with current agent', {
+          sessionKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
     this.sessionBuffers.set(acpSessionId, '');
     this.acpSessionIndex.set(acpSessionId, sessionKey);
