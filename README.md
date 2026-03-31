@@ -67,6 +67,21 @@ Any value in `app.json` can be overridden by setting the corresponding environme
 11. Invite the bot into the target channels
 12. Replace example channel IDs in `src/config/channels.json`
 
+## MCP server setup
+
+MCP servers are registered with `kiro-cli` and invoked by the ACP runtime — the Slack bot never calls them directly.
+
+1. Copy the example config:
+   ```bash
+   cp .kiro/settings/mcp.json.example ~/.kiro/settings/mcp.json
+   ```
+2. Fill in environment-specific values (endpoints, credentials)
+3. All sensitive values use `${VAR_NAME}` references — set them in your shell or `.env`
+
+Included MCP servers: OpenSearch, Grafana AMG, EKS, Thanos (Prometheus), GitHub, AWS Documentation.
+
+See `.kiro/settings/mcp.json.example` for the full template.
+
 ## ACP runtime contract
 
 By default the app starts one long-lived `kiro-cli acp` child process for the lifetime of the Node process. You can override the command with `ACP_COMMAND`.
