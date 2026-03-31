@@ -1,4 +1,7 @@
 import type { ResponseMode } from '../types';
+import { splitSlackMessage } from './response-formatter';
+
+const SLACK_MAX_TEXT = 3900;
 
 export interface SlackClientLike {
   chat: {
@@ -100,7 +103,8 @@ export class SlackStreamController {
   async pushDelta(target: SlackStreamTarget, statusMessageTs: string, text: string): Promise<void> {
     const channel = this.resolveChannel(target);
     const key = this.queueKey(channel, statusMessageTs);
-    this.latestTexts.set(key, text);
+    const truncated = text.length > SLACK_MAX_TEXT ? text.slice(0, SLACK_MAX_TEXT) + '\n…(streaming)' : text;
+    this.latestTexts.set(key, truncated);
     this.scheduleFlush(channel, statusMessageTs);
   }
 
@@ -109,12 +113,21 @@ export class SlackStreamController {
     const key = this.queueKey(channel, statusMessageTs);
     this.clearPendingFlush(key);
     this.latestTexts.delete(key);
+
+    const parts = splitSlackMessage(text.trim() || 'Done.', SLACK_MAX_TEXT);
     await this.enqueueUpdate(channel, statusMessageTs, async () => {
       await this.client.chat.update({
         channel,
         ts: statusMessageTs,
-        text: text.trim() || 'Done.',
+        text: parts[0],
       });
+      for (let i = 1; i < parts.length; i++) {
+        await this.client.chat.postMessage({
+          channel,
+          thread_ts: target.threadTs,
+          text: parts[i],
+        });
+      }
     });
   }
 
@@ -123,11 +136,14 @@ export class SlackStreamController {
     const key = this.queueKey(channel, statusMessageTs);
     this.clearPendingFlush(key);
     this.latestTexts.delete(key);
+    // Never expose stack traces or internal details to Slack users
+    const safeError = error.includes('\n') ? error.split('\n')[0] : error;
+    const display = safeError.length > 200 ? safeError.slice(0, 200) + '…' : safeError;
     await this.enqueueUpdate(channel, statusMessageTs, async () => {
       await this.client.chat.update({
         channel,
         ts: statusMessageTs,
-        text: `ACP request failed: ${error}`,
+        text: `⚠️ Request failed: ${display}`,
       });
     });
   }
