@@ -78,6 +78,12 @@ MCP servers are registered with `kiro-cli` and invoked by the ACP runtime — th
 2. Fill in environment-specific values (endpoints, credentials)
 3. All sensitive values use `${VAR_NAME}` references — set them in your shell or `.env`
 
+Or use the interactive setup script:
+```bash
+./scripts/setup-mcp.sh
+```
+It reads the example, prompts for each credential, and writes `~/.kiro/settings/mcp.json`.
+
 Included MCP servers: OpenSearch, Grafana AMG, EKS, Thanos (Prometheus), GitHub, AWS Documentation.
 
 See `.kiro/settings/mcp.json.example` for the full template.
