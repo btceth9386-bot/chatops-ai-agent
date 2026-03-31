@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AcpEvent, AcpPromptPayload, AgentName } from '../types';
@@ -97,10 +100,23 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   }>();
   private readonly promptRequests = new Map<JsonRpcId, string>();
   private readonly sessionModels = new Map<string, string>();
+  private readonly modeModels = new Map<string, string>();
 
   constructor(private readonly command: string) {
     super();
+    this.seedModeModels();
     this.child = this.spawnChild();
+  }
+
+  private seedModeModels(): void {
+    const agentsDir = join(homedir(), '.kiro', 'agents');
+    for (const mode of ['senior', 'architect']) {
+      try {
+        const raw = readFileSync(join(agentsDir, `${mode}.json`), 'utf-8');
+        const model = JSON.parse(raw)?.model;
+        if (typeof model === 'string') this.modeModels.set(mode, model);
+      } catch { /* agent config not found, will learn from session/new */ }
+    }
   }
 
   async initialize(): Promise<void> {
@@ -165,6 +181,8 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     const model = asString(models?.currentModelId);
     if (model) this.sessionModels.set(sessionId, model);
+    const mode = asString(modes?.currentModeId);
+    if (mode && model) this.modeModels.set(mode, model);
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -203,6 +221,9 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     try {
       await this.sendRequest('session/set_mode', { sessionId, modeId });
       log.info('switchAgent success via session/set_mode', { sessionId, agent });
+      this.sessionModels.delete(sessionId);
+      const learned = this.modeModels.get(modeId);
+      if (learned) this.sessionModels.set(sessionId, learned);
     } catch (err) {
       log.warn('session/set_mode failed, trying command fallback', {
         sessionId,
