@@ -1,6 +1,7 @@
 {
   "port": 3000,
   "maxMessageLength": 10000,
+  "logLevel": "info",
   "channelConfigPath": "src/config/channels.json",
   "cloudwatch": {
     "logGroup": "/chatops-ai-agent/app",

@@ -3,6 +3,9 @@ import type { AcpProcessManager } from '../acp/process-manager';
 import type { SessionStore } from '../sessions/store';
 import type { CloudWatchLogger } from '../logging/cloudwatch';
 import type { SlackStreamController } from './stream-controller';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('session-runtime');
 
 function buildSessionKey(channelId: string, threadTs: string): string {
   return `THREAD#${channelId}:${threadTs}`;
@@ -53,11 +56,11 @@ export class SlackSessionRuntime {
       };
 
       if (existing.inflight && !this.acpManager.hasSession(sessionKey, existing.acpSessionId || undefined)) {
-        console.error('[DIAG] stale inflight recovered', JSON.stringify({
+        log.warn('stale inflight recovered', {
           sessionKey,
           acpSessionId: existing.acpSessionId,
           queuedBefore: existing.queue.length,
-        }));
+        });
         existing.inflight = false;
         existing.acpSessionId = '';
         existing.statusMessageTs = undefined;
@@ -145,19 +148,19 @@ export class SlackSessionRuntime {
 
   private async handleAcpEvent(event: AcpEvent): Promise<void> {
     await this.withAcpEventLock(event.sessionId, async () => {
-      console.error('[DIAG] handleAcpEvent received', JSON.stringify({
+      log.debug('handleAcpEvent received', {
         sessionId: event.sessionId,
         type: event.type,
         hasText: Boolean(event.text),
         hasError: Boolean(event.error),
-      }));
+      });
 
       const state = await this.findStateByAcpSessionId(event.sessionId);
       if (!state) {
-        console.error('[DIAG] handleAcpEvent state-miss', JSON.stringify({
+        log.debug('handleAcpEvent state-miss', {
           sessionId: event.sessionId,
           type: event.type,
-        }));
+        });
         return;
       }
 
@@ -183,14 +186,14 @@ export class SlackSessionRuntime {
         const bufferedText = this.sessionBuffers.get(event.sessionId) ?? '';
         const finalText = event.preserveBuffer ? bufferedText : `${bufferedText}${event.text ?? ''}`;
         const decoratedFinalText = state.sessionNotice ? `${state.sessionNotice}\n\n${finalText}` : finalText;
-        console.error('[DIAG] handleAcpEvent final', JSON.stringify({
+        log.debug('handleAcpEvent final', {
           sessionId: event.sessionId,
           preserveBuffer: Boolean(event.preserveBuffer),
           bufferedLength: bufferedText.length,
           eventTextLength: (event.text ?? '').length,
           finalLength: finalText.length,
           hasSessionNotice: Boolean(state.sessionNotice),
-        }));
+        });
         await this.streamController.complete(target, state.statusMessageTs, decoratedFinalText);
         await this.finishCurrent(state, true);
       }
@@ -214,14 +217,11 @@ export class SlackSessionRuntime {
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
-    console.error('[DIAG] findStateByAcpSessionId:start', JSON.stringify({ acpSessionId }));
+    log.debug('findStateByAcpSessionId:start', { acpSessionId });
 
     const indexedSessionKey = this.acpSessionIndex.get(acpSessionId);
     if (indexedSessionKey) {
-      console.error('[DIAG] findStateByAcpSessionId:memory-hit', JSON.stringify({
-        acpSessionId,
-        sessionKey: indexedSessionKey,
-      }));
+      log.debug('findStateByAcpSessionId:memory-hit', { acpSessionId, sessionKey: indexedSessionKey });
       await this.logger.logInfo('ACP session lookup: memory-hit', {
         component: 'session-runtime',
         acpSessionId,
@@ -230,13 +230,10 @@ export class SlackSessionRuntime {
       return await this.sessionStore.get(indexedSessionKey);
     }
 
-    console.error('[DIAG] findStateByAcpSessionId:query-gsi', JSON.stringify({ acpSessionId }));
+    log.debug('findStateByAcpSessionId:query-gsi', { acpSessionId });
     const state = await this.sessionStore.getByAcpSessionId(acpSessionId);
     if (state) {
-      console.error('[DIAG] findStateByAcpSessionId:gsi-hit', JSON.stringify({
-        acpSessionId,
-        sessionKey: state.sessionKey,
-      }));
+      log.info('findStateByAcpSessionId:gsi-hit', { acpSessionId, sessionKey: state.sessionKey });
       this.acpSessionIndex.set(acpSessionId, state.sessionKey);
       await this.logger.logInfo('ACP session lookup: gsi-fallback-hit', {
         component: 'session-runtime',
@@ -246,7 +243,7 @@ export class SlackSessionRuntime {
       return state;
     }
 
-    console.error('[DIAG] findStateByAcpSessionId:miss', JSON.stringify({ acpSessionId }));
+    log.warn('findStateByAcpSessionId:miss', { acpSessionId });
     await this.logger.logWarn('ACP session lookup: miss', {
       component: 'session-runtime',
       acpSessionId,
