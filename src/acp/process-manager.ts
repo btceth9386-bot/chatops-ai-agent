@@ -141,10 +141,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   async createSession(agent: AgentName = 'senior-agent'): Promise<string> {
     await this.initialize();
+    const modeId = agent === 'architect-agent' ? 'architect' : 'senior';
 
     const result = await this.sendRequest('session/new', {
       cwd: process.cwd(),
-      agentName: agent,
+      agentName: modeId,
       mcpServers: [],
     });
 
