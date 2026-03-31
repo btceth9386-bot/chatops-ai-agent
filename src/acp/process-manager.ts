@@ -302,7 +302,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
       if (message.error) {
         log.error('rpc-error', message.error);
+        const promptSessionId = this.promptRequests.get(message.id);
         this.promptRequests.delete(message.id);
+        if (promptSessionId) {
+          this.emitAcpEvent({ sessionId: promptSessionId, type: 'error', error: message.error.message ?? JSON.stringify(message.error) });
+        }
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         return;
       }
