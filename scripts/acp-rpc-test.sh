@@ -4,7 +4,7 @@ set -euo pipefail
 COMMAND="${ACP_COMMAND:-kiro-cli acp}"
 TIMEOUT_SECONDS="45"
 CWD_OVERRIDE="$(cd "$(dirname "$0")/.." && pwd)"
-AGENT_NAME="senior-agent"
+AGENT_NAME="senior"
 MODE="interactive"
 LOAD_SESSION_ID=""
 PROMPT_TEXT=""
