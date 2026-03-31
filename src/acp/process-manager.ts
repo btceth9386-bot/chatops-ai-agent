@@ -11,7 +11,7 @@ const ACP_LOAD_TIMEOUT_MS = 30_000;
 
 const log = createLogger('acp');
 
-type JsonRpcId = number;
+type JsonRpcId = number | string;
 
 interface JsonRpcErrorShape {
   code?: number;
@@ -146,10 +146,19 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       mcpServers: [],
     });
 
-    const sessionId = asString(asRecord(result)?.sessionId);
+    const rec = asRecord(result);
+    const sessionId = asString(rec?.sessionId);
     if (!sessionId) {
       throw new Error(`ACP session/new did not return sessionId: ${JSON.stringify(result)}`);
     }
+
+    const modes = asRecord(rec?.modes);
+    const models = asRecord(rec?.models);
+    log.info('session created details', {
+      sessionId,
+      currentMode: asString(modes?.currentModeId),
+      currentModel: asString(models?.currentModelId),
+    });
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -179,9 +188,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
     await this.initialize();
-    log.info('switchAgent', { sessionId, agent });
+    const modeId = agent === 'architect-agent' ? 'architect' : 'senior';
+    log.info('switchAgent', { sessionId, agent, modeId });
     try {
-      await this.sendRequest('session/set_mode', { sessionId, agentName: agent });
+      await this.sendRequest('session/set_mode', { sessionId, modeId });
       log.info('switchAgent success via session/set_mode', { sessionId, agent });
     } catch (err) {
       log.warn('session/set_mode failed, trying command fallback', {
@@ -340,6 +350,18 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       return;
     }
 
+    if (message.method === 'session/request_permission' && message.id != null) {
+      const params = asRecord(message.params);
+      const toolCall = asRecord(params?.toolCall);
+      log.info('auto-approve permission', { id: message.id, tool: asString(toolCall?.title) });
+      this.child?.stdin.write(`${JSON.stringify({
+        jsonrpc: JSON_RPC_VERSION,
+        id: message.id,
+        result: { outcome: { outcome: 'selected', optionId: 'allow_once' } },
+      })}\n`);
+      return;
+    }
+
     log.debug('unhandled-message', line);
   }
 
@@ -385,7 +407,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      const toolName = asString(update.name) ?? 'tool';
+      const toolName = asString(update.title) ?? asString(update.name) ?? 'tool';
       this.emitAcpEvent({ sessionId, type: 'delta', text: `\n[tool:${toolName}]\n` });
       return;
     }

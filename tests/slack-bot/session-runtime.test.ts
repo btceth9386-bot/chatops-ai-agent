@@ -38,6 +38,12 @@ class FakeAcpManager {
     this.prompts.push(payload);
   }
 
+  public readonly agentSwitches: Array<{ sessionId: string; agent: string }> = [];
+
+  async switchAgent(sessionId: string, agent: string): Promise<void> {
+    this.agentSwitches.push({ sessionId, agent });
+  }
+
   emit(event: AcpEvent): void {
     for (const listener of this.listeners) {
       listener(event);
@@ -114,14 +120,65 @@ describe('SlackSessionRuntime', () => {
     await flush();
     await flush();
 
-    expect(acpManager.prompts).toHaveLength(2);
-    expect(acpManager.prompts[1]).toMatchObject({
-      agent: 'architect-agent',
-      sessionId: 'acp-1',
-      prompt: [{ type: 'text', text: 'architect please help' }],
-    });
+    expect(acpManager.prompts).toHaveLength(1);
     expect(stream.updates).toContain('partial ');
     expect(stream.updates).toContain('FINAL:partial done');
+    expect(stream.updates).toContain('FINAL:🔀 Switched to *architect* mode.');
+  });
+
+  it('de_escalation switches back to senior agent without sending a prompt', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    // First escalate to architect
+    await runtime.enqueue(event('escalate'), channel, 'escalation');
+    await flush();
+
+    // Then de-escalate back to senior
+    await runtime.enqueue(event('de-escalate'), channel, 'de_escalation');
+    await flush();
+
+    expect(acpManager.agentSwitches).toContainEqual({ sessionId: 'acp-1', agent: 'architect-agent' });
+    expect(acpManager.agentSwitches).toContainEqual({ sessionId: 'acp-1', agent: 'senior-agent' });
+    expect(stream.updates).toContain('FINAL:🔀 Switched to *architect* mode.');
+    expect(stream.updates).toContain('FINAL:🔀 Switched to *senior* mode.');
+    expect(acpManager.prompts).toHaveLength(0);
+  });
+
+  it('restores agent mode via switchAgent when resuming a session on a new ACP process', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    // Pre-seed state as if architect was active before restart
+    await store.put({
+      sessionKey: 'THREAD#C1:123.456',
+      acpSessionId: 'acp-old',
+      activeAgent: 'architect-agent',
+      inflight: false,
+      queue: [],
+      responseMode: 'thread_reply',
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    acpManager.ensureSession = vi.fn().mockResolvedValue({
+      sessionId: 'acp-new',
+      resumed: true,
+      fallbackFromLoad: false,
+    });
+
+    await runtime.enqueue(event('hello after restart'), channel, 'prompt');
+    acpManager.emit({ sessionId: 'acp-new', type: 'final', text: 'architect reply' });
+    await flush();
+
+    // Should have restored architect mode on the new session
+    expect(acpManager.agentSwitches).toContainEqual({ sessionId: 'acp-new', agent: 'architect-agent' });
+    expect(stream.updates).toContain('FINAL:architect reply');
   });
 
   it('includes a user-facing notice when ACP session restore falls back to a new session', async () => {

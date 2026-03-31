@@ -33,7 +33,7 @@ export class SlackSessionRuntime {
     });
   }
 
-  async enqueue(event: SlackEvent, channel: ChannelConfig, kind: 'prompt' | 'escalation'): Promise<void> {
+  async enqueue(event: SlackEvent, channel: ChannelConfig, kind: 'prompt' | 'escalation' | 'de_escalation'): Promise<void> {
     const sessionKey = buildSessionKey(event.channelId, event.threadTs);
     const request: SessionRequest = {
       messageText: event.messageText,
@@ -94,7 +94,9 @@ export class SlackSessionRuntime {
       responseMode: state.responseMode,
     };
 
-    const activeAgent: AgentName = next.kind === 'escalation' ? 'architect-agent' : state.activeAgent || 'senior-agent';
+    const isModeSwitch = next.kind === 'escalation' || next.kind === 'de_escalation';
+    const targetAgent: AgentName = next.kind === 'escalation' ? 'architect-agent' : next.kind === 'de_escalation' ? 'senior-agent' : state.activeAgent || 'senior-agent';
+    const activeAgent: AgentName = isModeSwitch ? targetAgent : state.activeAgent || 'senior-agent';
     const ensureResult = await this.acpManager.ensureSession(
       sessionKey,
       state.acpSessionId || undefined,
@@ -102,15 +104,40 @@ export class SlackSessionRuntime {
     );
     const acpSessionId = ensureResult.sessionId;
 
-    if (next.kind === 'escalation' && ensureResult.resumed && state.activeAgent !== 'architect-agent') {
+    if (isModeSwitch && state.activeAgent !== targetAgent) {
       try {
-        await this.acpManager.switchAgent(acpSessionId, 'architect-agent');
+        await this.acpManager.switchAgent(acpSessionId, targetAgent);
       } catch (err) {
         log.warn('agent switch failed, continuing with current agent', {
           sessionKey,
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    } else if (!isModeSwitch && ensureResult.resumed && activeAgent !== 'senior-agent') {
+      try {
+        await this.acpManager.switchAgent(acpSessionId, activeAgent);
+      } catch (err) {
+        log.warn('agent restore after load failed', {
+          sessionKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (isModeSwitch) {
+      const modeName = targetAgent === 'architect-agent' ? 'architect' : 'senior';
+      const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
+      await this.streamController.complete(target, statusMessageTs, `🔀 Switched to *${modeName}* mode.`);
+      const updatedState: SessionState = {
+        ...state,
+        acpSessionId,
+        activeAgent,
+        statusMessageTs,
+        lastUpdatedAt: isoNow(),
+      };
+      await this.sessionStore.put(updatedState);
+      await this.finishCurrent(updatedState, true);
+      return;
     }
 
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);

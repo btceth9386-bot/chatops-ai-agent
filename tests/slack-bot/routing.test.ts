@@ -51,8 +51,40 @@ describe('RoutingLayer', () => {
 
   it('detects explicit escalation commands', () => {
     const routing = new RoutingLayer(config);
-    const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: '@bot architect please review' }));
+    const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: 'escalate' }));
 
     expect(decision.action).toBe('escalate');
+  });
+
+  it.each(['escalate', '/escalate', '/architect', '<@U123BOT> escalate', '<@U123BOT>  /architect'])(
+    'recognises escalation variant: %s',
+    (text) => {
+      const routing = new RoutingLayer(config);
+      const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: text }));
+      expect(decision.action).toBe('escalate');
+    },
+  );
+
+  it('detects explicit de-escalation commands', () => {
+    const routing = new RoutingLayer(config);
+    const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: 'de-escalate' }));
+
+    expect(decision.action).toBe('de_escalate');
+    expect(decision.reason).toBe('explicit_human_deescalation');
+  });
+
+  it.each(['de-escalate', '/de-escalate', '/senior', '<@U123BOT> de-escalate', '<@U123BOT>  /senior'])(
+    'recognises de-escalation variant: %s',
+    (text) => {
+      const routing = new RoutingLayer(config);
+      const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: text }));
+      expect(decision.action).toBe('de_escalate');
+    },
+  );
+
+  it('does not treat partial matches as escalation', () => {
+    const routing = new RoutingLayer(config);
+    const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: 'please escalate the issue' }));
+    expect(decision.action).toBe('acp_prompt');
   });
 });

@@ -15,6 +15,7 @@ export interface AppConfig {
     dynamoTableName: string;
   };
   acpCommand: string;
+  acpDefaultAgent: string;
 }
 
 const DEFAULT_PATH = resolve(__dirname, '..', '..', '..', 'src', 'config', 'app.json');
@@ -36,5 +37,6 @@ export function loadAppConfig(path = DEFAULT_PATH): AppConfig {
       dynamoTableName: process.env.DYNAMODB_TABLE_NAME ?? raw.aws?.dynamoTableName ?? 'slack-kiro-sessions',
     },
     acpCommand: process.env.ACP_COMMAND ?? raw.acpCommand ?? 'kiro-cli acp',
+    acpDefaultAgent: process.env.ACP_DEFAULT_AGENT ?? raw.acpDefaultAgent ?? '',
   };
 }

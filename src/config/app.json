@@ -11,5 +11,6 @@
     "region": "us-east-1",
     "dynamoTableName": "slack-kiro-sessions"
   },
-  "acpCommand": "kiro-cli acp"
+  "acpCommand": "kiro-cli acp",
+  "acpDefaultAgent": ""
 }
