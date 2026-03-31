@@ -34,6 +34,7 @@ interface AcpTransport {
   loadSession(sessionId: string): Promise<string>;
   switchAgent(sessionId: string, agent: AgentName): Promise<void>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
+  getSessionModel(sessionId: string): string | undefined;
   onEvent(listener: (event: AcpEvent) => void): void;
   close(): void;
 }
@@ -95,6 +96,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     method: string;
   }>();
   private readonly promptRequests = new Map<JsonRpcId, string>();
+  private readonly sessionModels = new Map<string, string>();
 
   constructor(private readonly command: string) {
     super();
@@ -160,6 +162,9 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       currentModel: asString(models?.currentModelId),
     });
 
+    const model = asString(models?.currentModelId);
+    if (model) this.sessionModels.set(sessionId, model);
+
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
   }
@@ -182,6 +187,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       loadedSessionId,
       resultKeys: Object.keys(asRecord(result) ?? {}),
     });
+    const loadedRec = asRecord(result);
+    const loadedModels = asRecord(loadedRec?.models);
+    const loadedModel = asString(loadedModels?.currentModelId);
+    if (loadedModel) this.sessionModels.set(loadedSessionId, loadedModel);
     this.emitAcpEvent({ sessionId: loadedSessionId, type: 'started' });
     return loadedSessionId;
   }
@@ -204,6 +213,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       });
       log.info('switchAgent success via command fallback', { sessionId, agent });
     }
+  }
+
+  getSessionModel(sessionId: string): string | undefined {
+    return this.sessionModels.get(sessionId);
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -599,6 +612,14 @@ export class AcpProcessManager {
 
   async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
     await this.transport.switchAgent(sessionId, agent);
+  }
+
+  getSessionModel(sessionId: string): string | undefined {
+    return this.transport.getSessionModel(sessionId);
+  }
+
+  getSessionIdByKey(sessionKey: string): string | undefined {
+    return this.sessions.get(sessionKey);
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
