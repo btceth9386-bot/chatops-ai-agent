@@ -3,12 +3,15 @@ import { resolve } from 'node:path';
 import { loadAppConfig } from '../config/app-config';
 import { ConfigurationManager } from '../config/manager';
 import { CloudWatchLogger } from '../logging/cloudwatch';
+import { createLogger } from '../logging/logger';
 import { toSlackEvent, handleSlackEvent } from './events';
 import { RoutingLayer } from './routing';
 import { createSessionStore } from '../sessions/store';
 import { AcpProcessManager } from '../acp/process-manager';
 import { SlackStreamController } from './stream-controller';
 import { SlackSessionRuntime } from './session-runtime';
+
+const log = createLogger('app');
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -44,22 +47,22 @@ export async function createSlackApp() {
 
   let cleanedUp = false;
   const cleanup = (reason: string) => {
-    console.error('[DIAG] app cleanup invoked', JSON.stringify({ reason, cleanedUp }));
+    log.info('cleanup invoked', { reason, cleanedUp });
     if (cleanedUp) return;
     cleanedUp = true;
     acpManager.close();
   };
 
   process.on('beforeExit', (code) => {
-    console.error('[DIAG] process beforeExit', JSON.stringify({ code }));
+    log.debug('process beforeExit', { code });
   });
 
   process.on('uncaughtException', (error) => {
-    console.error('[DIAG] process uncaughtException', error);
+    log.error('uncaughtException', error);
   });
 
   process.on('unhandledRejection', (reason) => {
-    console.error('[DIAG] process unhandledRejection', reason);
+    log.error('unhandledRejection', reason);
   });
 
   process.once('SIGINT', () => cleanup('SIGINT'));
@@ -67,10 +70,10 @@ export async function createSlackApp() {
   process.once('exit', (code) => cleanup(`exit:${code}`));
 
   app.event('app_mention', async ({ event }) => {
-    console.log('[DIAG] app_mention received:', JSON.stringify({ user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts }));
+    log.info('app_mention received', { user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts });
     const slackEvent = toSlackEvent(event as any, 'app_mention', appConfig.maxMessageLength);
     await handleSlackEvent(slackEvent, routing, logger, runtime);
-    console.log('[DIAG] app_mention handleSlackEvent completed');
+    log.debug('app_mention handled');
   });
 
   app.event('message', async ({ event }) => {
@@ -87,7 +90,7 @@ export async function createSlackApp() {
   });
 
   app.error(async (error) => {
-    console.error('[DIAG] Bolt global error:', error);
+    log.error('Bolt global error', error);
     await logger.logError('Bolt app error', error as Error, { component: 'slack-app' });
   });
 

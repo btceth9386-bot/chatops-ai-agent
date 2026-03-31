@@ -2,6 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { existsSync, watch } from 'node:fs';
 import { resolve } from 'node:path';
 import { ChannelConfig } from '../types';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('config');
 
 export interface BotConfigFiles {
   channelsPath: string;

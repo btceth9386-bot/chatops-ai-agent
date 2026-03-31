@@ -2,11 +2,14 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AcpEvent, AcpPromptPayload, AgentName } from '../types';
+import { createLogger } from '../logging/logger';
 
 const JSON_RPC_VERSION = '2.0';
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_REQUEST_TIMEOUT_MS = 60_000;
 const ACP_LOAD_TIMEOUT_MS = 30_000;
+
+const log = createLogger('acp');
 
 type JsonRpcId = number;
 
@@ -98,13 +101,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   }
 
   async initialize(): Promise<void> {
-    console.error('[DIAG][ACP transport] initialize-begin', JSON.stringify({
+    log.debug('transport initialize-begin', {
       hasChild: Boolean(this.child),
       pid: this.child?.pid ?? null,
-      exitCode: this.child?.exitCode ?? null,
-      killed: this.child?.killed ?? null,
       initialized: this.initialized,
-    }));
+    });
 
     if (!this.child || this.child.exitCode !== null || this.child.killed) {
       this.child = this.spawnChild();
@@ -112,9 +113,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (this.initialized) {
-      console.error('[DIAG][ACP transport] initialize-skip-already-initialized', JSON.stringify({
-        pid: this.child?.pid ?? null,
-      }));
+      log.debug('transport initialize-skip (already initialized)', { pid: this.child?.pid ?? null });
       return;
     }
 
@@ -134,10 +133,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     });
 
     this.initialized = true;
-    console.error('[DIAG][ACP transport] initialize-done', JSON.stringify({
-      pid: this.child?.pid ?? null,
-      initialized: this.initialized,
-    }));
+    log.debug('transport initialize-done', { pid: this.child?.pid ?? null });
   }
 
   async createSession(agent: AgentName = 'senior-agent'): Promise<string> {
@@ -161,10 +157,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   async loadSession(sessionId: string): Promise<string> {
     await this.initialize();
 
-    console.error('[DIAG][ACP transport] session/load request', JSON.stringify({
-      sessionId,
-      cwd: process.cwd(),
-    }));
+    log.debug('session/load request', { sessionId });
     this.suppressEvents = true;
     const result = await this.sendRequest('session/load', {
       sessionId,
@@ -174,11 +167,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     this.suppressEvents = false;
 
     const loadedSessionId = asString(asRecord(result)?.sessionId) ?? sessionId;
-    console.error('[DIAG][ACP transport] session/load response', JSON.stringify({
+    log.debug('session/load response', {
       requestedSessionId: sessionId,
       loadedSessionId,
       resultKeys: Object.keys(asRecord(result) ?? {}),
-    }));
+    });
     this.emitAcpEvent({ sessionId: loadedSessionId, type: 'started' });
     return loadedSessionId;
   }
@@ -199,27 +192,19 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   }
 
   private spawnChild() {
-    console.error('[DIAG][ACP transport] spawn-start', JSON.stringify({ command: this.command }));
+    log.debug('spawn-start', { command: this.command });
     const child = spawn('sh', ['-lc', this.command], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    console.error('[DIAG][ACP transport] spawn-created', JSON.stringify({
-      command: this.command,
-      pid: child.pid ?? null,
-    }));
+    log.debug('spawn-created', { pid: child.pid ?? null });
 
     child.on('spawn', () => {
-      console.error('[DIAG][ACP transport] spawn-ready', JSON.stringify({
-        pid: child.pid ?? null,
-      }));
+      log.debug('spawn-ready', { pid: child.pid ?? null });
     });
 
     child.on('error', (error) => {
-      console.error('[DIAG][ACP transport] spawn-error', JSON.stringify({
-        pid: child.pid ?? null,
-        message: error.message,
-      }));
+      log.error('spawn-error', { pid: child.pid ?? null, message: error.message });
     });
 
     child.stdout.on('data', (chunk: Buffer | string) => {
@@ -230,7 +215,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        console.error('[DIAG][ACP stdout]', trimmed);
+        log.debug('stdout', trimmed);
         this.handleLine(trimmed);
       }
     });
@@ -238,7 +223,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     child.stderr.on('data', (chunk: Buffer | string) => {
       const text = chunk.toString().trim();
       if (text) {
-        console.error('[DIAG][ACP stderr]', text);
+        log.warn('acp stderr', text);
       }
       this.emitAcpEvent({
         sessionId: 'unknown',
@@ -248,11 +233,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     });
 
     child.on('exit', (code, signal) => {
-      console.error('[DIAG][ACP transport] exit', JSON.stringify({
-        pid: child.pid ?? null,
-        code: code ?? null,
-        signal: signal ?? null,
-      }));
+      log.error('process exited', { pid: child.pid ?? null, code, signal });
       const detail = `ACP process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timeout);
@@ -273,7 +254,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     try {
       message = JSON.parse(line) as JsonRpcMessage;
     } catch {
-      console.error('[DIAG][ACP handleLine] parse-failed', line);
+      log.error('parse-failed', line);
       this.emitAcpEvent({
         sessionId: 'unknown',
         type: 'error',
@@ -282,18 +263,17 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       return;
     }
 
-    console.error('[DIAG][ACP handleLine] message-shape', JSON.stringify({
-      hasId: typeof message.id === 'number',
+    log.debug('message-shape', {
       id: message.id,
       method: message.method,
       hasResult: typeof message.result !== 'undefined',
       hasError: Boolean(message.error),
-    }));
+    });
 
     if (typeof message.id === 'number') {
       const pending = this.pending.get(message.id);
       if (!pending) {
-        console.error('[DIAG][ACP handleLine] no-pending-for-id', JSON.stringify({ id: message.id }));
+        log.debug('no-pending-for-id', { id: message.id });
         return;
       }
 
@@ -301,7 +281,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       clearTimeout(pending.timeout);
 
       if (message.error) {
-        console.error('[DIAG][ACP handleLine] rpc-error', JSON.stringify(message.error));
+        log.error('rpc-error', message.error);
         this.promptRequests.delete(message.id);
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         return;
@@ -313,13 +293,12 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
         this.promptRequests.delete(message.id);
         const finalText = collectText(asRecord(message.result)?.content);
         const preserveBuffer = finalText.length === 0;
-        console.error('[DIAG][ACP handleLine] prompt-result', JSON.stringify({
+        log.debug('prompt-result', {
           id: message.id,
           promptSessionId,
           finalTextLength: finalText.length,
-          resultKeys: Object.keys(asRecord(message.result) ?? {}),
           preserveBuffer,
-        }));
+        });
         this.emitAcpEvent({
           sessionId: promptSessionId,
           type: 'final',
@@ -337,7 +316,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       return;
     }
 
-    console.error('[DIAG][ACP handleLine] unhandled-message', line);
+    log.debug('unhandled-message', line);
   }
 
   private emitPromptResult(result: unknown): void {
@@ -356,19 +335,18 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     const sessionId = asString(root?.sessionId) ?? 'unknown';
     const update = asRecord(root?.update);
     if (!update) {
-      console.error('[DIAG][ACP emitSessionUpdate] missing-update', JSON.stringify({ sessionId, rootKeys: Object.keys(root ?? {}) }));
+      log.debug('session-update missing update field', { sessionId, rootKeys: Object.keys(root ?? {}) });
       return;
     }
 
     const updateType = asString(update.sessionUpdate) ?? asString(update.type) ?? asString(update.kind);
     const content = update.content;
     const text = collectText(content) || collectText(update);
-    console.error('[DIAG][ACP emitSessionUpdate]', JSON.stringify({
+    log.debug('session-update', {
       sessionId,
       updateType,
       textLength: text.length,
-      updateKeys: Object.keys(update),
-    }));
+    });
 
     if (
       updateType === 'agent_message_chunk' ||
@@ -411,14 +389,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       params,
     };
 
-    console.error('[DIAG][ACP transport] sendRequest', JSON.stringify({
-      id,
-      method,
-      hasChild: Boolean(this.child),
-      pid: this.child?.pid ?? null,
-      exitCode: this.child?.exitCode ?? null,
-      killed: this.child?.killed ?? null,
-    }));
+    log.debug('sendRequest', { id, method, pid: this.child?.pid ?? null });
 
     return await new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -453,12 +424,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   close(): void {
     const child = this.child;
-    console.error('[DIAG][ACP transport] close-called', JSON.stringify({
-      hasChild: Boolean(child),
-      pid: child?.pid ?? null,
-      exitCode: child?.exitCode ?? null,
-      killed: child?.killed ?? null,
-    }));
+    log.info('transport close', { pid: child?.pid ?? null });
 
     if (!child || child.killed || child.exitCode !== null) {
       this.child = undefined;
@@ -467,13 +433,12 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     try {
-      console.error('[DIAG][ACP transport] close-sigterm-process-group', JSON.stringify({ pid: child.pid ?? null }));
       process.kill(-child.pid!, 'SIGTERM');
     } catch (error) {
-      console.error('[DIAG][ACP transport] close-process-group-failed', JSON.stringify({
+      log.warn('close process-group failed, falling back to SIGTERM', {
         pid: child.pid ?? null,
         error: error instanceof Error ? error.message : String(error),
-      }));
+      });
       child.kill('SIGTERM');
     }
 
@@ -539,12 +504,7 @@ export class AcpProcessManager {
     const ensurePromise = (async () => {
       if (existingSessionId) {
         const loadStartedAt = Date.now();
-        console.error('[DIAG][ACP ensureSession] load-attempt', JSON.stringify({
-          sessionKey,
-          existingSessionId,
-          agent,
-          timeoutMs: ACP_LOAD_TIMEOUT_MS,
-        }));
+        log.info('session load-attempt', { sessionKey, existingSessionId, agent });
         try {
           this.suppressEvents = true;
           const restoredSessionId = await Promise.race<string>([
@@ -554,13 +514,12 @@ export class AcpProcessManager {
             }),
           ]);
           this.suppressEvents = false;
-          console.error('[DIAG][ACP ensureSession] load-success', JSON.stringify({
+          log.info('session load-success', {
             sessionKey,
-            existingSessionId,
             restoredSessionId,
             reusedSameId: restoredSessionId === existingSessionId,
             elapsedMs: Date.now() - loadStartedAt,
-          }));
+          });
           this.sessions.set(sessionKey, restoredSessionId);
           resumed = true;
           return restoredSessionId;
@@ -568,32 +527,19 @@ export class AcpProcessManager {
           this.suppressEvents = false;
           fallbackFromLoad = true;
           const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error('[DIAG][ACP ensureSession] load-failed', JSON.stringify({
+          log.warn('session load-failed, falling back to new session', {
             sessionKey,
             existingSessionId,
             error: errorMessage,
             elapsedMs: Date.now() - loadStartedAt,
-          }));
+          });
           this.recycleTransport(`load-failed:${errorMessage}`);
-          console.error('[DIAG][ACP ensureSession] fallback-session-new', JSON.stringify({
-            sessionKey,
-            priorSessionId: existingSessionId,
-            agent,
-          }));
         }
       }
 
-      console.error('[DIAG][ACP ensureSession] create-session', JSON.stringify({
-        sessionKey,
-        agent,
-        hadExistingSessionId: Boolean(existingSessionId),
-      }));
+      log.info('session create', { sessionKey, agent });
       const sessionId = await this.transport.createSession(agent);
-      console.error('[DIAG][ACP ensureSession] create-session-success', JSON.stringify({
-        sessionKey,
-        sessionId,
-        agent,
-      }));
+      log.info('session created', { sessionKey, sessionId });
       this.sessions.set(sessionKey, sessionId);
       return sessionId;
     })().finally(() => {
@@ -616,7 +562,7 @@ export class AcpProcessManager {
   }
 
   private recycleTransport(reason: string): void {
-    console.error('[DIAG][ACP manager] recycle-transport', JSON.stringify({ reason }));
+    log.warn('recycling transport', { reason });
     this.transport.close();
     const transport = new JsonRpcAcpTransport(this.command);
     transport.onEvent((event) => this.emit(event));

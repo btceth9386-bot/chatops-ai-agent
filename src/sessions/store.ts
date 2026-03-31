@@ -1,5 +1,8 @@
 import { DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import type { AgentName, ResponseMode, SessionRecord, SessionState } from '../types';
+import { createLogger } from '../logging/logger';
+
+const log = createLogger('session-store');
 
 export interface SessionStore {
   get(sessionKey: string): Promise<SessionState | null>;
@@ -110,10 +113,7 @@ export class DynamoDbSessionStore implements SessionStore {
   }
 
   async getByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
-    console.error('[DIAG] sessionStore.getByAcpSessionId:start', JSON.stringify({
-      acpSessionId,
-      indexName: ACP_SESSION_ID_INDEX_NAME,
-    }));
+    log.debug('getByAcpSessionId:start', { acpSessionId });
 
     const result = await this.client.send(
       new QueryCommand({
@@ -129,14 +129,11 @@ export class DynamoDbSessionStore implements SessionStore {
 
     const item = result.Items?.[0];
     if (!item) {
-      console.error('[DIAG] sessionStore.getByAcpSessionId:miss', JSON.stringify({ acpSessionId }));
+      log.debug('getByAcpSessionId:miss', { acpSessionId });
       return null;
     }
 
-    console.error('[DIAG] sessionStore.getByAcpSessionId:hit', JSON.stringify({
-      acpSessionId,
-      sessionKey: item.pk?.S ?? '',
-    }));
+    log.debug('getByAcpSessionId:hit', { acpSessionId, sessionKey: item.pk?.S ?? '' });
     return fromItem(item.pk?.S ?? '', item as Record<string, any>);
   }
 
