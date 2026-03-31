@@ -109,6 +109,12 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   }
 
   private seedModeModels(): void {
+    // ACP's session/set_mode response is empty {} per spec (SetSessionModeResponse only has _meta).
+    // ACP spec defines configOptions and current_mode_update notification for tracking mode/model
+    // changes, but Kiro does not implement these yet. As a workaround, we read the model from
+    // ~/.kiro/agents/<mode>.json at startup. This is reliable because Kiro's mode IDs map 1:1
+    // to these agent config files, and the model field in each file is what Kiro actually uses.
+    // TODO: Switch to configOptions / current_mode_update when Kiro implements them.
     const agentsDir = join(homedir(), '.kiro', 'agents');
     for (const mode of ['senior', 'architect']) {
       try {
