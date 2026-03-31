@@ -65,6 +65,15 @@ export async function handleSlackEvent(
       });
       await runtime.enqueue(event, decision.channel!, 'escalation');
       return;
+    case 'de_escalate':
+      await logger.logInfo('De-escalation requested', {
+        component: 'events',
+        channelId: event.channelId,
+        threadTs: event.threadTs,
+        userId: event.userId,
+      });
+      await runtime.enqueue(event, decision.channel!, 'de_escalation');
+      return;
     case 'acp_prompt':
       await logger.logInfo('ACP prompt requested', {
         component: 'events',

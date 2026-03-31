@@ -41,7 +41,10 @@ export async function createSlackApp() {
   const sessionStore = createSessionStore({
     tableName: appConfig.aws.dynamoTableName,
   });
-  const acpManager = new AcpProcessManager({ command: appConfig.acpCommand });
+  const acpCommand = appConfig.acpDefaultAgent
+    ? `${appConfig.acpCommand} --agent ${appConfig.acpDefaultAgent}`
+    : appConfig.acpCommand;
+  const acpManager = new AcpProcessManager({ command: acpCommand });
   const streamController = new SlackStreamController(app.client as any);
   const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
 
@@ -70,7 +73,7 @@ export async function createSlackApp() {
   process.once('exit', (code) => cleanup(`exit:${code}`));
 
   app.event('app_mention', async ({ event }) => {
-    log.info('app_mention received', { user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts });
+    log.info('app_mention received', { user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts, thread_ts: (event as any).thread_ts });
     const slackEvent = toSlackEvent(event as any, 'app_mention', appConfig.maxMessageLength);
     await handleSlackEvent(slackEvent, routing, logger, runtime);
     log.debug('app_mention handled');

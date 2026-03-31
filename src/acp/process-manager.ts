@@ -11,7 +11,7 @@ const ACP_LOAD_TIMEOUT_MS = 30_000;
 
 const log = createLogger('acp');
 
-type JsonRpcId = number;
+type JsonRpcId = number | string;
 
 interface JsonRpcErrorShape {
   code?: number;
@@ -32,6 +32,7 @@ interface AcpTransport {
   initialize(): Promise<void>;
   createSession(agent?: AgentName): Promise<string>;
   loadSession(sessionId: string): Promise<string>;
+  switchAgent(sessionId: string, agent: AgentName): Promise<void>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
   onEvent(listener: (event: AcpEvent) => void): void;
   close(): void;
@@ -145,10 +146,19 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       mcpServers: [],
     });
 
-    const sessionId = asString(asRecord(result)?.sessionId);
+    const rec = asRecord(result);
+    const sessionId = asString(rec?.sessionId);
     if (!sessionId) {
       throw new Error(`ACP session/new did not return sessionId: ${JSON.stringify(result)}`);
     }
+
+    const modes = asRecord(rec?.modes);
+    const models = asRecord(rec?.models);
+    log.info('session created details', {
+      sessionId,
+      currentMode: asString(modes?.currentModeId),
+      currentModel: asString(models?.currentModelId),
+    });
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -174,6 +184,26 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     });
     this.emitAcpEvent({ sessionId: loadedSessionId, type: 'started' });
     return loadedSessionId;
+  }
+
+  async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
+    await this.initialize();
+    const modeId = agent === 'architect-agent' ? 'architect' : 'senior';
+    log.info('switchAgent', { sessionId, agent, modeId });
+    try {
+      await this.sendRequest('session/set_mode', { sessionId, modeId });
+      log.info('switchAgent success via session/set_mode', { sessionId, agent });
+    } catch (err) {
+      log.warn('session/set_mode failed, trying command fallback', {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await this.sendRequest('_kiro.dev/commands/execute', {
+        sessionId,
+        command: `/agent swap ${agent}`,
+      });
+      log.info('switchAgent success via command fallback', { sessionId, agent });
+    }
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -282,7 +312,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
       if (message.error) {
         log.error('rpc-error', message.error);
+        const promptSessionId = this.promptRequests.get(message.id);
         this.promptRequests.delete(message.id);
+        if (promptSessionId) {
+          this.emitAcpEvent({ sessionId: promptSessionId, type: 'error', error: message.error.message ?? JSON.stringify(message.error) });
+        }
         pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         return;
       }
@@ -313,6 +347,18 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     if (message.method === 'session/update' || message.method === 'session/notification') {
       this.emitSessionUpdate(message.params);
+      return;
+    }
+
+    if (message.method === 'session/request_permission' && message.id != null) {
+      const params = asRecord(message.params);
+      const toolCall = asRecord(params?.toolCall);
+      log.info('auto-approve permission', { id: message.id, tool: asString(toolCall?.title) });
+      this.child?.stdin.write(`${JSON.stringify({
+        jsonrpc: JSON_RPC_VERSION,
+        id: message.id,
+        result: { outcome: { outcome: 'selected', optionId: 'allow_once' } },
+      })}\n`);
       return;
     }
 
@@ -361,7 +407,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      const toolName = asString(update.name) ?? 'tool';
+      const toolName = asString(update.title) ?? asString(update.name) ?? 'tool';
       this.emitAcpEvent({ sessionId, type: 'delta', text: `\n[tool:${toolName}]\n` });
       return;
     }
@@ -549,6 +595,10 @@ export class AcpProcessManager {
     this.sessionPromises.set(sessionKey, ensurePromise);
     const sessionId = await ensurePromise;
     return { sessionId, resumed, fallbackFromLoad };
+  }
+
+  async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
+    await this.transport.switchAgent(sessionId, agent);
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {

@@ -6,7 +6,7 @@ import type { ChannelConfig, SlackEvent } from '../types';
 import type { LoadedConfig } from '../config/manager';
 
 export interface RoutingDecision {
-  action: 'ignore' | 'learning' | 'acp_prompt' | 'escalate';
+  action: 'ignore' | 'learning' | 'acp_prompt' | 'escalate' | 'de_escalate';
   reason: string;
   channel?: ChannelConfig;
 }
@@ -37,8 +37,16 @@ export class RoutingLayer {
     );
   }
 
+  private stripMention(text: string): string {
+    return text.replace(/^\s*<@[A-Z0-9]+>\s*/i, '').trim();
+  }
+
   isEscalationCommand(text: string): boolean {
-    return /\b(escalate|architect)\b/i.test(text);
+    return /^(escalate|\/escalate|\/architect)$/i.test(this.stripMention(text));
+  }
+
+  isDeescalationCommand(text: string): boolean {
+    return /^(de-escalate|\/de-escalate|\/senior)$/i.test(this.stripMention(text));
   }
 
   decide(event: SlackEvent): RoutingDecision {
@@ -49,6 +57,10 @@ export class RoutingLayer {
 
     if (this.isEscalationCommand(event.messageText)) {
       return { action: 'escalate', reason: 'explicit_human_escalation', channel };
+    }
+
+    if (this.isDeescalationCommand(event.messageText)) {
+      return { action: 'de_escalate', reason: 'explicit_human_deescalation', channel };
     }
 
     if (channel.mode === 'learning') {

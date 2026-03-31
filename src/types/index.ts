@@ -52,7 +52,7 @@ export interface SessionRequest {
   threadTs: string;
   userId: string;
   timestamp: string;
-  kind?: 'prompt' | 'escalation';
+  kind?: 'prompt' | 'escalation' | 'de_escalation';
 }
 
 export interface SessionState {
@@ -194,7 +194,7 @@ export interface AcpPromptPayload {
     channelId: string;
     threadTs: string;
     userId: string;
-    requestKind: 'prompt' | 'escalation';
+    requestKind: 'prompt' | 'escalation' | 'de_escalation';
   };
 }
 
