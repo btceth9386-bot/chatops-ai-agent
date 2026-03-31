@@ -75,6 +75,25 @@ export async function createSlackApp() {
   app.event('app_mention', async ({ event }) => {
     log.info('app_mention received', { user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts, thread_ts: (event as any).thread_ts });
     const slackEvent = toSlackEvent(event as any, 'app_mention', appConfig.maxMessageLength);
+
+    const decision = routing.decide(slackEvent);
+    if (decision.action === 'status') {
+      const threadTs = slackEvent.threadTs;
+      const sessionKey = `THREAD#${slackEvent.channelId}:${threadTs}`;
+      const state = await sessionStore.get(sessionKey);
+      const agent = state?.activeAgent ?? 'senior-agent';
+      const mode = agent === 'architect-agent' ? 'architect' : 'senior';
+      const model = state?.acpSessionId ? (acpManager.getSessionModel(state.acpSessionId) ?? 'unknown') : 'no session';
+      const sessionId = state?.acpSessionId ? `${state.acpSessionId.slice(0, 8)}…` : 'none';
+      await app.client.chat.postMessage({
+        channel: slackEvent.channelId,
+        thread_ts: threadTs,
+        text: `📊 *Session Status*\n• Agent: \`${mode}\`\n• Model: \`${model}\`\n• Session: \`${sessionId}\``,
+      });
+      log.debug('status reply sent');
+      return;
+    }
+
     await handleSlackEvent(slackEvent, routing, logger, runtime);
     log.debug('app_mention handled');
   });

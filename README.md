@@ -15,8 +15,22 @@ Phase 1 foundation for a Slack + ACP based ChatOps bot.
 - Per-session FIFO queueing with inflight lock semantics
 - Slack placeholder + streaming update controller
 - End-to-end handling for normal ACP prompts and `escalate` / `architect` requests in the same session
+- Agent switching: escalate to architect, de-escalate back to senior, with session state persistence
+- `@bot status` command to show current agent, model, and session ID in-thread
 - Unit tests for routing, formatting, session runtime, and session store
 - Node entrypoint (`src/index.ts`)
+
+## Bot commands
+
+Mention the bot in a thread to use these commands:
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `@bot escalate` | `@bot /escalate`, `@bot /architect` | Switch to architect agent |
+| `@bot de-escalate` | `@bot /de-escalate`, `@bot /senior` | Switch back to senior agent |
+| `@bot status` | `@bot /status` | Show current agent, model, and session ID |
+
+Any other mention is treated as a normal prompt to the active agent.
 
 ## Configuration strategy
 
@@ -71,7 +85,7 @@ The app now treats `kiro-cli acp` as a JSON-RPC ACP server over stdio:
 ```
 
 ```json
-{ "jsonrpc": "2.0", "id": 2, "method": "session/new", "params": { "cwd": "/path/to/repo", "agentName": "senior-agent" } }
+{ "jsonrpc": "2.0", "id": 2, "method": "session/new", "params": { "cwd": "/path/to/repo", "agentName": "senior" } }
 ```
 
 ```json

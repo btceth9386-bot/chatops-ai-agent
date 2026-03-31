@@ -87,4 +87,14 @@ describe('RoutingLayer', () => {
     const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: 'please escalate the issue' }));
     expect(decision.action).toBe('acp_prompt');
   });
+
+  it.each(['status', '/status', '<@U123BOT> status', '<@U123BOT>  /status'])(
+    'recognises status command: %s',
+    (text) => {
+      const routing = new RoutingLayer(config);
+      const decision = routing.decide(makeEvent({ channelId: 'C3', messageText: text }));
+      expect(decision.action).toBe('status');
+      expect(decision.reason).toBe('status_query');
+    },
+  );
 });

@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AcpEvent, AcpPromptPayload, AgentName } from '../types';
@@ -34,6 +37,7 @@ interface AcpTransport {
   loadSession(sessionId: string): Promise<string>;
   switchAgent(sessionId: string, agent: AgentName): Promise<void>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
+  getSessionModel(sessionId: string): string | undefined;
   onEvent(listener: (event: AcpEvent) => void): void;
   close(): void;
 }
@@ -95,10 +99,30 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     method: string;
   }>();
   private readonly promptRequests = new Map<JsonRpcId, string>();
+  private readonly sessionModels = new Map<string, string>();
+  private readonly modeModels = new Map<string, string>();
 
   constructor(private readonly command: string) {
     super();
+    this.seedModeModels();
     this.child = this.spawnChild();
+  }
+
+  private seedModeModels(): void {
+    // ACP's session/set_mode response is empty {} per spec (SetSessionModeResponse only has _meta).
+    // ACP spec defines configOptions and current_mode_update notification for tracking mode/model
+    // changes, but Kiro does not implement these yet. As a workaround, we read the model from
+    // ~/.kiro/agents/<mode>.json at startup. This is reliable because Kiro's mode IDs map 1:1
+    // to these agent config files, and the model field in each file is what Kiro actually uses.
+    // TODO: Switch to configOptions / current_mode_update when Kiro implements them.
+    const agentsDir = join(homedir(), '.kiro', 'agents');
+    for (const mode of ['senior', 'architect']) {
+      try {
+        const raw = readFileSync(join(agentsDir, `${mode}.json`), 'utf-8');
+        const model = JSON.parse(raw)?.model;
+        if (typeof model === 'string') this.modeModels.set(mode, model);
+      } catch { /* agent config not found, will learn from session/new */ }
+    }
   }
 
   async initialize(): Promise<void> {
@@ -139,10 +163,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   async createSession(agent: AgentName = 'senior-agent'): Promise<string> {
     await this.initialize();
+    const modeId = agent === 'architect-agent' ? 'architect' : 'senior';
 
     const result = await this.sendRequest('session/new', {
       cwd: process.cwd(),
-      agentName: agent,
+      agentName: modeId,
       mcpServers: [],
     });
 
@@ -159,6 +184,11 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       currentMode: asString(modes?.currentModeId),
       currentModel: asString(models?.currentModelId),
     });
+
+    const model = asString(models?.currentModelId);
+    if (model) this.sessionModels.set(sessionId, model);
+    const mode = asString(modes?.currentModeId);
+    if (mode && model) this.modeModels.set(mode, model);
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -182,6 +212,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       loadedSessionId,
       resultKeys: Object.keys(asRecord(result) ?? {}),
     });
+    const loadedRec = asRecord(result);
+    const loadedModels = asRecord(loadedRec?.models);
+    const loadedModel = asString(loadedModels?.currentModelId);
+    if (loadedModel) this.sessionModels.set(loadedSessionId, loadedModel);
     this.emitAcpEvent({ sessionId: loadedSessionId, type: 'started' });
     return loadedSessionId;
   }
@@ -193,6 +227,9 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     try {
       await this.sendRequest('session/set_mode', { sessionId, modeId });
       log.info('switchAgent success via session/set_mode', { sessionId, agent });
+      this.sessionModels.delete(sessionId);
+      const learned = this.modeModels.get(modeId);
+      if (learned) this.sessionModels.set(sessionId, learned);
     } catch (err) {
       log.warn('session/set_mode failed, trying command fallback', {
         sessionId,
@@ -204,6 +241,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       });
       log.info('switchAgent success via command fallback', { sessionId, agent });
     }
+  }
+
+  getSessionModel(sessionId: string): string | undefined {
+    return this.sessionModels.get(sessionId);
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -599,6 +640,14 @@ export class AcpProcessManager {
 
   async switchAgent(sessionId: string, agent: AgentName): Promise<void> {
     await this.transport.switchAgent(sessionId, agent);
+  }
+
+  getSessionModel(sessionId: string): string | undefined {
+    return this.transport.getSessionModel(sessionId);
+  }
+
+  getSessionIdByKey(sessionKey: string): string | undefined {
+    return this.sessions.get(sessionKey);
   }
 
   async sendPrompt(payload: AcpPromptPayload): Promise<void> {
