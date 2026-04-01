@@ -108,6 +108,31 @@ describe('SlackStreamController', () => {
     expect(text.length).toBeLessThan(230);
   });
 
+  it('complete splits multi-byte (CJK) text by byte length', async () => {
+    // 2000 Chinese chars = 6000 bytes, exceeds 3900-byte limit
+    const cjkText = '中'.repeat(2000);
+    await ctrl.complete(target, 'ph-1', cjkText);
+
+    expect(client.updates).toHaveLength(1);
+    expect(Buffer.byteLength(client.updates[0].text as string, 'utf8')).toBeLessThanOrEqual(3900);
+
+    // Should have at least one follow-up message
+    expect(client.posts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('pushDelta truncates multi-byte text by byte length', async () => {
+    // 2000 Chinese chars = 6000 bytes, well over 3900
+    const cjkText = '中'.repeat(2000);
+    await ctrl.pushDelta(target, 'ph-1', cjkText);
+
+    await new Promise((r) => setTimeout(r, 1100));
+
+    expect(client.updates).toHaveLength(1);
+    const flushed = client.updates[0].text as string;
+    expect(Buffer.byteLength(flushed, 'utf8')).toBeLessThanOrEqual(3900);
+    expect(flushed).toContain('…(streaming)');
+  });
+
   it('resolves publish_channel target correctly', async () => {
     const pubTarget: SlackStreamTarget = {
       channelId: 'C1',
