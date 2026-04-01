@@ -1,0 +1,62 @@
+{
+  "mcpServers": {
+    "opensearch-mcp-server-prod": {
+      "command": "uvx",
+      "args": ["opensearch-mcp-server@latest"],
+      "env": {
+        "OPENSEARCH_URL": "${OPENSEARCH_URL}",
+        "AWS_OPENSEARCH_SERVERLESS": "false",
+        "OPENSEARCH_USERNAME": "${OPENSEARCH_USERNAME}",
+        "OPENSEARCH_PASSWORD": "${OPENSEARCH_PASSWORD}",
+        "AWS_REGION": "us-east-1"
+      },
+      "autoApprove": ["search", "list_indices", "get_mappings", "get_cluster_health", "get_cluster_info"],
+      "tools": ["search", "list_indices", "get_mappings", "get_cluster_health", "get_cluster_info"]
+    },
+    "grafana-amg": {
+      "command": "uvx",
+      "args": ["mcp-grafana"],
+      "env": {
+        "GRAFANA_URL": "${GRAFANA_URL}",
+        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_SERVICE_ACCOUNT_TOKEN}"
+      },
+      "autoApprove": ["search_dashboards", "get_dashboard_by_uid", "get_dashboard_summary", "list_datasources", "get_datasource_by_uid", "query_prometheus", "get_dashboard_annotations", "list_alert_rules", "get_alert_rule"],
+      "tools": ["search_dashboards", "get_dashboard_by_uid", "get_dashboard_summary", "list_datasources", "get_datasource_by_uid", "query_prometheus", "get_dashboard_annotations", "list_alert_rules", "get_alert_rule"]
+    },
+    "awslabs-eks-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.eks-mcp-server@latest", "--allow-sensitive-data-access"],
+      "env": {
+        "AWS_PROFILE": "default"
+      },
+      "autoApprove": ["get_cluster_details", "list_clusters", "list_pods", "list_namespaces", "list_deployments", "list_services", "list_nodes", "describe_pod", "describe_deployment", "describe_service", "describe_node", "get_pod_logs", "get_events"],
+      "tools": ["get_cluster_details", "list_clusters", "list_pods", "list_namespaces", "list_deployments", "list_services", "list_nodes", "describe_pod", "describe_deployment", "describe_service", "describe_node", "get_pod_logs", "get_events"]
+    },
+    "thanos-prod": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["prometheus-mcp-server"],
+      "env": {
+        "PROMETHEUS_URL": "${PROMETHEUS_URL}"
+      },
+      "autoApprove": ["execute_query", "execute_range_query", "get_metric_metadata", "list_metrics", "get_targets", "get_rules", "get_alerts"]
+    },
+    "github": {
+      "command": "/usr/local/bin/github-mcp-server",
+      "args": ["stdio"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "autoApprove": ["get_file_contents", "search_code", "search_issues", "search_pull_requests", "create_pull_request", "create_branch", "push_files", "merge_pull_request", "add_issue_comment"]
+    },
+    "awslabs-aws-documentation-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR",
+        "AWS_DOCUMENTATION_PARTITION": "aws"
+      },
+      "autoApprove": ["search_documentation", "get_documentation", "recommend"]
+    }
+  }
+}
