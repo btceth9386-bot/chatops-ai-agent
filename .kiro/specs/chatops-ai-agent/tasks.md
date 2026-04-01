@@ -247,6 +247,14 @@ This plan implements the ChatOps AI Agent in three phases: (1) Core Slack Bot & 
     - Test skill file update, syntax validation, revert on failure, commit message format
     - _Requirements: 17.1–17.5_
 
+- [ ] 11.5 Implement tool permission whitelist (Issue #16)
+  - [ ] 11.5.1 Add `toolWhitelist` config to `app.json` (per-agent or global fallback)
+  - [ ] 11.5.2 Update `AcpProcessManager.handleMessage()` to check tool name against whitelist before approving `session/request_permission`
+  - [ ] 11.5.3 Deny non-whitelisted tools with `optionId: "deny"`, log at WARN level
+  - [ ] 11.5.4 Preserve backward compatibility: empty whitelist = approve all
+  - [ ]* 11.5.5 Write unit tests for permission whitelist logic
+  - _Requirements: 22.1–22.7_
+
 - [ ] 12. Checkpoint — Phase 2 complete
   - Ensure all tests pass, ask the user if questions arise.
 
