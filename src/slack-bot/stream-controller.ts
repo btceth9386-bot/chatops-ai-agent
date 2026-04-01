@@ -1,4 +1,23 @@
 import type { ResponseMode } from '../types';
+import { splitSlackMessage } from './response-formatter';
+
+const SLACK_MAX_BYTES = 3900;
+
+/** Truncate text so its UTF-8 byte length stays within `maxBytes`. */
+function truncateToBytes(text: string, maxBytes: number, suffix = ''): string {
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const limit = maxBytes - suffixBytes;
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  // Binary-search for the right char index
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >>> 1;
+    if (Buffer.byteLength(text.slice(0, mid), 'utf8') <= limit) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo) + suffix;
+}
 
 export interface SlackClientLike {
   chat: {
@@ -100,7 +119,8 @@ export class SlackStreamController {
   async pushDelta(target: SlackStreamTarget, statusMessageTs: string, text: string): Promise<void> {
     const channel = this.resolveChannel(target);
     const key = this.queueKey(channel, statusMessageTs);
-    this.latestTexts.set(key, text);
+    const truncated = truncateToBytes(text, SLACK_MAX_BYTES, '\n…(streaming)');
+    this.latestTexts.set(key, truncated);
     this.scheduleFlush(channel, statusMessageTs);
   }
 
@@ -109,12 +129,21 @@ export class SlackStreamController {
     const key = this.queueKey(channel, statusMessageTs);
     this.clearPendingFlush(key);
     this.latestTexts.delete(key);
+
+    const parts = splitSlackMessage(text.trim() || 'Done.', SLACK_MAX_BYTES);
     await this.enqueueUpdate(channel, statusMessageTs, async () => {
       await this.client.chat.update({
         channel,
         ts: statusMessageTs,
-        text: text.trim() || 'Done.',
+        text: parts[0],
       });
+      for (let i = 1; i < parts.length; i++) {
+        await this.client.chat.postMessage({
+          channel,
+          thread_ts: target.threadTs,
+          text: parts[i],
+        });
+      }
     });
   }
 
@@ -123,11 +152,14 @@ export class SlackStreamController {
     const key = this.queueKey(channel, statusMessageTs);
     this.clearPendingFlush(key);
     this.latestTexts.delete(key);
+    // Never expose stack traces or internal details to Slack users
+    const safeError = error.includes('\n') ? error.split('\n')[0] : error;
+    const display = safeError.length > 200 ? safeError.slice(0, 200) + '…' : safeError;
     await this.enqueueUpdate(channel, statusMessageTs, async () => {
       await this.client.chat.update({
         channel,
         ts: statusMessageTs,
-        text: `ACP request failed: ${error}`,
+        text: `⚠️ Request failed: ${display}`,
       });
     });
   }
