@@ -25,17 +25,18 @@ echo "This script will generate $OUTPUT"
 echo "Press Enter to keep a variable empty (will use the placeholder as-is)."
 echo ""
 
-declare -A values
+# Collect values into a temp file (avoids eval and associative arrays)
+tmpfile=$(mktemp)
+trap 'rm -f "$tmpfile"' EXIT
 
 for var in $vars; do
-  # Check if already set in environment
   current="${!var:-}"
   if [[ -n "$current" ]]; then
     read -rp "$var [env: ${current:0:20}...]: " input
-    values[$var]="${input:-$current}"
+    printf '%s=%s\n' "$var" "${input:-$current}" >> "$tmpfile"
   else
     read -rp "$var: " input
-    values[$var]="$input"
+    printf '%s=%s\n' "$var" "$input" >> "$tmpfile"
   fi
 done
 
@@ -43,22 +44,20 @@ done
 mkdir -p "$(dirname "$OUTPUT")"
 content=$(<"$EXAMPLE")
 
-for var in $vars; do
-  val="${values[$var]}"
-  if [[ -n "$val" ]]; then
-    content="${content//\$\{$var\}/$val}"
-  fi
-done
+while IFS='=' read -r var val; do
+  [[ -z "$val" ]] && continue
+  content="${content//\$\{$var\}/$val}"
+done < "$tmpfile"
 
 echo "$content" > "$OUTPUT"
 echo ""
 echo "✔ Written to $OUTPUT"
 echo ""
 echo "Variables filled:"
-for var in $vars; do
-  if [[ -n "${values[$var]}" ]]; then
+while IFS='=' read -r var val; do
+  if [[ -n "$val" ]]; then
     echo "  ✅ $var"
   else
     echo "  ⏭️  $var (kept as placeholder)"
   fi
-done
+done < "$tmpfile"
