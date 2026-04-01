@@ -1,7 +1,23 @@
 import type { ResponseMode } from '../types';
 import { splitSlackMessage } from './response-formatter';
 
-const SLACK_MAX_TEXT = 3900;
+const SLACK_MAX_BYTES = 3900;
+
+/** Truncate text so its UTF-8 byte length stays within `maxBytes`. */
+function truncateToBytes(text: string, maxBytes: number, suffix = ''): string {
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const limit = maxBytes - suffixBytes;
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  // Binary-search for the right char index
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >>> 1;
+    if (Buffer.byteLength(text.slice(0, mid), 'utf8') <= limit) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo) + suffix;
+}
 
 export interface SlackClientLike {
   chat: {
@@ -103,7 +119,7 @@ export class SlackStreamController {
   async pushDelta(target: SlackStreamTarget, statusMessageTs: string, text: string): Promise<void> {
     const channel = this.resolveChannel(target);
     const key = this.queueKey(channel, statusMessageTs);
-    const truncated = text.length > SLACK_MAX_TEXT ? text.slice(0, SLACK_MAX_TEXT) + '\n…(streaming)' : text;
+    const truncated = truncateToBytes(text, SLACK_MAX_BYTES, '\n…(streaming)');
     this.latestTexts.set(key, truncated);
     this.scheduleFlush(channel, statusMessageTs);
   }
@@ -114,7 +130,7 @@ export class SlackStreamController {
     this.clearPendingFlush(key);
     this.latestTexts.delete(key);
 
-    const parts = splitSlackMessage(text.trim() || 'Done.', SLACK_MAX_TEXT);
+    const parts = splitSlackMessage(text.trim() || 'Done.', SLACK_MAX_BYTES);
     await this.enqueueUpdate(channel, statusMessageTs, async () => {
       await this.client.chat.update({
         channel,
