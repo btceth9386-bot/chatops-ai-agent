@@ -228,7 +228,7 @@ describe('AcpProcessManager', () => {
     modeModelMap.set('senior', 'claude-sonnet-4.6');
     transport.getModeModel = (modeId?: string) => modeModelMap.get(modeId ?? '');
 
-    const manager = new AcpProcessManager(transport as never);
+    const manager = new AcpProcessManager({ transport: transport as any });
 
     // No session loaded yet — getSessionModel returns undefined
     expect(manager.getSessionModel('nonexistent')).toBeUndefined();
