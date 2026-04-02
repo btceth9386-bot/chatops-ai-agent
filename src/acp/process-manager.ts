@@ -106,7 +106,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   constructor(private readonly command: string) {
     super();
     this.seedModeModels();
-    this.child = this.spawnChild();
+    // Don't spawn here — spawn lazily on first initialize() to avoid orphans
   }
 
   private seedModeModels(): void {
@@ -168,7 +168,6 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     const result = await this.sendRequest('session/new', {
       cwd: process.cwd(),
-      agentName: modeId,
       mcpServers: [],
     });
 
@@ -180,16 +179,23 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     const modes = asRecord(rec?.modes);
     const models = asRecord(rec?.models);
+    const currentMode = asString(modes?.currentModeId);
     log.info('session created details', {
       sessionId,
-      currentMode: asString(modes?.currentModeId),
+      currentMode,
       currentModel: asString(models?.currentModelId),
     });
 
     const model = asString(models?.currentModelId);
     if (model) this.sessionModels.set(sessionId, model);
-    const mode = asString(modes?.currentModeId);
-    if (mode && model) this.modeModels.set(mode, model);
+    if (currentMode && model) this.modeModels.set(currentMode, model);
+
+    // ACP spec has no agentName param in session/new.
+    // Always use session/set_mode to ensure the correct mode.
+    if (currentMode !== modeId) {
+      log.info('session/set_mode after create', { sessionId, from: currentMode, to: modeId });
+      await this.switchAgent(sessionId, agent);
+    }
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -271,6 +277,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     log.debug('spawn-start', { command: this.command });
     const child = spawn('sh', ['-lc', this.command], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     });
 
     log.debug('spawn-created', { pid: child.pid ?? null });
@@ -453,8 +460,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      const toolName = asString(update.title) ?? asString(update.name) ?? 'tool';
-      this.emitAcpEvent({ sessionId, type: 'delta', text: `\n[tool:${toolName}]\n` });
+      log.debug('tool_call', { sessionId, tool: asString(update.title) ?? asString(update.name) });
       return;
     }
 
@@ -516,26 +522,28 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   close(): void {
     const child = this.child;
+    this.child = undefined;
+    this.initialized = false;
     log.info('transport close', { pid: child?.pid ?? null });
 
     if (!child || child.killed || child.exitCode !== null) {
-      this.child = undefined;
-      this.initialized = false;
       return;
     }
 
     try {
       process.kill(-child.pid!, 'SIGTERM');
-    } catch (error) {
-      log.warn('close process-group failed, falling back to SIGTERM', {
-        pid: child.pid ?? null,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      child.kill('SIGTERM');
+    } catch {
+      try { child.kill('SIGTERM'); } catch { /* already dead */ }
     }
 
-    this.child = undefined;
-    this.initialized = false;
+    // Force-kill after 3s if still alive
+    setTimeout(() => {
+      try { process.kill(-child.pid!, 0); } catch { return; } // already dead
+      log.warn('force-killing ACP process', { pid: child.pid });
+      try { process.kill(-child.pid!, 'SIGKILL'); } catch {
+        try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      }
+    }, 3000).unref();
   }
 
   private emitAcpEvent(event: AcpEvent): void {
