@@ -180,16 +180,25 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     const modes = asRecord(rec?.modes);
     const models = asRecord(rec?.models);
+    const currentMode = asString(modes?.currentModeId);
     log.info('session created details', {
       sessionId,
-      currentMode: asString(modes?.currentModeId),
+      currentMode,
       currentModel: asString(models?.currentModelId),
     });
 
     const model = asString(models?.currentModelId);
     if (model) this.sessionModels.set(sessionId, model);
-    const mode = asString(modes?.currentModeId);
-    if (mode && model) this.modeModels.set(mode, model);
+    if (currentMode && model) this.modeModels.set(currentMode, model);
+
+    // Kiro may ignore agentName on subsequent session/new calls within the
+    // same ACP process. If the returned mode doesn't match, force a switch.
+    if (currentMode && currentMode !== modeId) {
+      log.warn('session/new returned wrong mode, forcing switch', {
+        sessionId, expected: modeId, got: currentMode,
+      });
+      await this.switchAgent(sessionId, agent);
+    }
 
     this.emitAcpEvent({ sessionId, type: 'started' });
     return sessionId;
@@ -454,8 +463,7 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      const toolName = asString(update.title) ?? asString(update.name) ?? 'tool';
-      this.emitAcpEvent({ sessionId, type: 'delta', text: `\n[tool:${toolName}]\n` });
+      log.debug('tool_call', { sessionId, tool: asString(update.title) ?? asString(update.name) });
       return;
     }
 
