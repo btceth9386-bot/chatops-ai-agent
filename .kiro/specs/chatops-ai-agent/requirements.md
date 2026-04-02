@@ -377,3 +377,17 @@ The ChatOps AI Agent system is an internal AI-powered DevOps/SRE assistant that 
 3. THE Skill_Benchmark_Report SHALL be queryable by skill name, incident type, and time range
 4. THE system SHALL retain Skill_Benchmark_Reports for 90 days minimum
 5. THE Benchmark_Cronjob SHALL log execution status and errors to the CloudWatch_LogGroup
+
+### Requirement 22: Tool Permission Whitelist
+
+**User Story:** As a security engineer, I want the bot to enforce a tool whitelist when approving ACP permission requests, so that agents cannot execute unauthorized tools.
+
+#### Acceptance Criteria
+
+1. THE Slack_Bot SHALL maintain a configurable tool whitelist per agent (with a global fallback)
+2. WHEN `session/request_permission` is received from ACP, THE Slack_Bot SHALL check the requested tool name against the whitelist
+3. IF the tool is on the whitelist, THEN THE Slack_Bot SHALL respond with `optionId: "allow_once"`
+4. IF the tool is NOT on the whitelist, THEN THE Slack_Bot SHALL respond with `optionId: "deny"`
+5. WHEN a tool request is denied, THE Slack_Bot SHALL log the denial at WARN level with tool name and session context
+6. IF the whitelist is empty or not configured, THEN THE Slack_Bot SHALL approve all tools (backward compatible)
+7. THE tool whitelist SHALL be configurable via `app.json` or per-agent configuration

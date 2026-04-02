@@ -28,18 +28,23 @@ export function formatSafeSummary(summary: SafeSummary): string {
   ]);
 }
 
-export function splitSlackMessage(text: string, limit = SLACK_MESSAGE_LIMIT): string[] {
-  if (text.length <= limit) {
+export function splitSlackMessage(text: string, limitBytes = SLACK_MESSAGE_LIMIT): string[] {
+  if (Buffer.byteLength(text, 'utf8') <= limitBytes) {
     return [text];
   }
 
   const parts: string[] = [];
   let remaining = text;
 
-  while (remaining.length > limit) {
-    const candidate = remaining.slice(0, limit);
+  while (Buffer.byteLength(remaining, 'utf8') > limitBytes) {
+    // Find a char-index whose byte length is close to limitBytes
+    let hi = Math.min(remaining.length, limitBytes);
+    while (hi > 0 && Buffer.byteLength(remaining.slice(0, hi), 'utf8') > limitBytes) {
+      hi -= Math.max(1, Math.floor(hi / 10));
+    }
+    const candidate = remaining.slice(0, hi);
     const splitAt = Math.max(candidate.lastIndexOf('\n\n'), candidate.lastIndexOf('\n'), candidate.lastIndexOf(' '));
-    const boundary = splitAt > Math.floor(limit * 0.5) ? splitAt : limit;
+    const boundary = splitAt > Math.floor(hi * 0.5) ? splitAt : hi;
 
     parts.push(remaining.slice(0, boundary).trim());
     remaining = remaining.slice(boundary).trimStart();

@@ -22,6 +22,16 @@ class FakeTransport {
     return sessionId;
   }
 
+  async switchAgent(): Promise<void> {}
+
+  getSessionModel(): string | undefined {
+    return undefined;
+  }
+
+  getModeModel(_modeId?: string): string | undefined {
+    return undefined;
+  }
+
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
     this.prompts.push({ sessionId, prompt });
   }
@@ -210,5 +220,21 @@ describe('AcpProcessManager', () => {
     manager.close();
 
     expect(transport.closeCalls).toBe(1);
+  });
+
+  it('getModeModel falls back to agent config when sessionModels is empty', async () => {
+    const transport = new FakeTransport();
+    const modeModelMap = new Map<string, string>();
+    modeModelMap.set('senior', 'claude-sonnet-4.6');
+    transport.getModeModel = (modeId?: string) => modeModelMap.get(modeId ?? '');
+
+    const manager = new AcpProcessManager({ transport: transport as any });
+
+    // No session loaded yet — getSessionModel returns undefined
+    expect(manager.getSessionModel('nonexistent')).toBeUndefined();
+
+    // getModeModel delegates to transport which has 'senior' but not 'nonexistent'
+    expect(manager.getModeModel('senior')).toBe('claude-sonnet-4.6');
+    expect(manager.getModeModel('nonexistent_mode')).toBeUndefined();
   });
 });
