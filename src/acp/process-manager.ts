@@ -168,7 +168,6 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
     const result = await this.sendRequest('session/new', {
       cwd: process.cwd(),
-      agentName: modeId,
       mcpServers: [],
     });
 
@@ -191,12 +190,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     if (model) this.sessionModels.set(sessionId, model);
     if (currentMode && model) this.modeModels.set(currentMode, model);
 
-    // Kiro may ignore agentName on subsequent session/new calls within the
-    // same ACP process. If the returned mode doesn't match, force a switch.
-    if (currentMode && currentMode !== modeId) {
-      log.warn('session/new returned wrong mode, forcing switch', {
-        sessionId, expected: modeId, got: currentMode,
-      });
+    // ACP spec has no agentName param in session/new.
+    // Always use session/set_mode to ensure the correct mode.
+    if (currentMode !== modeId) {
+      log.info('session/set_mode after create', { sessionId, from: currentMode, to: modeId });
       await this.switchAgent(sessionId, agent);
     }
 
