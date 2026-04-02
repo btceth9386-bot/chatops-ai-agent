@@ -1,5 +1,8 @@
 import { App } from '@slack/bolt';
 import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { loadAppConfig } from '../config/app-config';
 import { ConfigurationManager } from '../config/manager';
 import { CloudWatchLogger } from '../logging/cloudwatch';
@@ -15,10 +18,46 @@ const log = createLogger('app');
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
+}
+
+function asciiTable(headers: string[], rows: string[][]): string {
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? '').length)));
+  const sep = '+' + widths.map((w) => '-'.repeat(w + 2)).join('+') + '+';
+  const fmt = (cells: string[]) => '|' + cells.map((c, i) => ` ${c.padEnd(widths[i])} `).join('|') + '|';
+  return [sep, fmt(headers), sep, ...rows.map(fmt), sep].join('\n');
+}
+
+function loadSkills(): Array<{ name: string; description: string }> {
+  const dir = join(homedir(), '.kiro', 'skills');
+  try {
+    return readdirSync(dir)
+      .map((name) => {
+        try {
+          const content = readFileSync(join(dir, name, 'SKILL.md'), 'utf-8');
+          const m = content.match(/^description:\s*(.+)$/m);
+          return { name, description: m ? m[1].trim().slice(0, 80) : '—' };
+        } catch {
+          return null;
+        }
+      })
+      .filter((s): s is { name: string; description: string } => s !== null);
+  } catch {
+    return [];
+  }
+}
+
+function loadMcpServers(): Array<{ name: string; command: string }> {
+  try {
+    const raw = JSON.parse(readFileSync(join(homedir(), '.kiro', 'settings', 'mcp.json'), 'utf-8'));
+    return Object.entries(raw?.mcpServers ?? {}).map(([name, cfg]) => ({
+      name,
+      command: (cfg as Record<string, unknown>)?.command as string ?? '—',
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function createSlackApp() {
@@ -71,6 +110,24 @@ export async function createSlackApp() {
   process.once('SIGINT', () => cleanup('SIGINT'));
   process.once('SIGTERM', () => cleanup('SIGTERM'));
   process.once('exit', (code) => cleanup(`exit:${code}`));
+
+  app.command('/skills', async ({ ack, respond }) => {
+    await ack();
+    const skills = loadSkills();
+    const text = skills.length === 0
+      ? 'No skills found in `~/.kiro/skills/`'
+      : '```\n' + asciiTable(['Skill', 'Description'], skills.map((s) => [s.name, s.description])) + '\n```';
+    await respond({ response_type: 'ephemeral', text });
+  });
+
+  app.command('/mcp', async ({ ack, respond }) => {
+    await ack();
+    const servers = loadMcpServers();
+    const text = servers.length === 0
+      ? 'No MCP servers configured in `~/.kiro/settings/mcp.json`'
+      : '```\n' + asciiTable(['Server', 'Command'], servers.map((s) => [s.name, s.command])) + '\n```';
+    await respond({ response_type: 'ephemeral', text });
+  });
 
   app.command('/usage', async ({ ack, respond }) => {
     await ack();
