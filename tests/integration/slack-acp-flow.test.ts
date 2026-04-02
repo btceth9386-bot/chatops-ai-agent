@@ -44,6 +44,7 @@ class FakeAcpTransport {
   }
 
   getSessionModel() { return 'claude-sonnet-4.6'; }
+  getModeModel() { return 'claude-sonnet-4.6'; }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>) {
     this.prompts.push({ sessionId, prompt, agent: 'senior-agent', metadata: {} } as any);
