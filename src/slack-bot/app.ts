@@ -83,7 +83,9 @@ export async function createSlackApp() {
       const state = await sessionStore.get(sessionKey);
       const agent = state?.activeAgent ?? 'senior-agent';
       const mode = agent === 'architect-agent' ? 'architect' : 'senior';
-      const model = state?.acpSessionId ? (acpManager.getSessionModel(state.acpSessionId) ?? 'unknown') : 'no session';
+      const model = state?.acpSessionId
+        ? (acpManager.getSessionModel(state.acpSessionId) ?? acpManager.getModeModel(mode) ?? 'unknown')
+        : 'no session';
       const sessionId = state?.acpSessionId ? `${state.acpSessionId.slice(0, 8)}…` : 'none';
       await app.client.chat.postMessage({
         channel: slackEvent.channelId,

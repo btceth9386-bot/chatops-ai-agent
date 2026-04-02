@@ -38,6 +38,7 @@ interface AcpTransport {
   switchAgent(sessionId: string, agent: AgentName): Promise<void>;
   prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void>;
   getSessionModel(sessionId: string): string | undefined;
+  getModeModel(modeId: string): string | undefined;
   onEvent(listener: (event: AcpEvent) => void): void;
   close(): void;
 }
@@ -245,6 +246,10 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
 
   getSessionModel(sessionId: string): string | undefined {
     return this.sessionModels.get(sessionId);
+  }
+
+  getModeModel(modeId: string): string | undefined {
+    return this.modeModels.get(modeId);
   }
 
   async prompt(sessionId: string, prompt: Array<{ type: 'text'; text: string }>): Promise<void> {
@@ -644,6 +649,10 @@ export class AcpProcessManager {
 
   getSessionModel(sessionId: string): string | undefined {
     return this.transport.getSessionModel(sessionId);
+  }
+
+  getModeModel(modeId: string): string | undefined {
+    return this.transport.getModeModel(modeId);
   }
 
   getSessionIdByKey(sessionKey: string): string | undefined {
