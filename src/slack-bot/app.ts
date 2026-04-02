@@ -72,8 +72,33 @@ export async function createSlackApp() {
   process.once('SIGTERM', () => cleanup('SIGTERM'));
   process.once('exit', (code) => cleanup(`exit:${code}`));
 
+  app.command('/usage', async ({ ack, respond }) => {
+    await ack();
+    await respond({
+      response_type: 'ephemeral',
+      text: [
+        '*ChatOps AI Agent — Usage Guide*',
+        '',
+        '*Commands (mention-based, use in any thread):*',
+        '• `@bot <question>` — Ask the AI agent anything; response streams back in the same thread',
+        '• `@bot status` or `@bot /status` — Show current agent, model, and session ID for this thread',
+        '• `@bot escalate` or `@bot /escalate` or `@bot /architect` — Switch to Architect agent (better for system design)',
+        '• `@bot de-escalate` or `@bot /de-escalate` or `@bot /senior` — Switch back to Senior Engineer agent',
+        '',
+        '*Session model:*',
+        '• Each Slack thread has its own independent session context',
+        '• The bot remembers the full conversation history within a thread',
+        '• Sessions persist across bot restarts (stored in DynamoDB)',
+        '• Starting a new thread starts a fresh session',
+        '',
+        '*Agents:*',
+        '• `senior` (default) — Senior Engineer, strong coding and debugging skills',
+        '• `architect` — Solutions Architect, better for system design and architecture decisions',
+      ].join('\n'),
+    });
+  });
+
   app.event('app_mention', async ({ event }) => {
-    log.info('app_mention received', { user: (event as any).user, channel: (event as any).channel, ts: (event as any).ts, thread_ts: (event as any).thread_ts });
     const slackEvent = toSlackEvent(event as any, 'app_mention', appConfig.maxMessageLength);
 
     const decision = routing.decide(slackEvent);
