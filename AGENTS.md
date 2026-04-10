@@ -2,6 +2,30 @@
 
 > Slack bot that bridges conversations to a `kiro-cli acp` backend via JSON-RPC over stdio. TypeScript, Node.js 24, CommonJS.
 
+## Phase Status
+
+The specs (`.kiro/specs/chatops-ai-agent/`) define three phases. Current state:
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 — Core Slack Bot & ACP Infrastructure | Event handling, routing, ACP session management, streaming, DynamoDB persistence, agent switching | ✅ Implemented |
+| 2 — Learning & Skill Improvement | Skill analysis cronjob, session log assembly on TurnEnd, skill PRs, tool permission whitelist | ❌ Not started |
+| 3 — Benchmarking | Benchmark cronjob, session metrics, regression detection, Slack alerting | ❌ Not started |
+
+Types for Phase 2/3 features already exist in `src/types/index.ts` (e.g., `SafeSummary`, `TriageResult`, `SessionMetric`, `SkillBenchmark`, `BenchmarkReport`, `SkillAnalysisConfig`, `SkillAnalysisResult`). These are aspirational — no runtime code uses them yet.
+
+## Design ↔ Implementation Mapping
+
+The design doc (`.kiro/specs/chatops-ai-agent/design.md`) uses different file names than what was built:
+
+| Design file | Actual implementation | Notes |
+|-------------|----------------------|-------|
+| `acp/acp-session-manager.ts` | `slack-bot/session-runtime.ts` | FIFO queue, inflight lock, ACP dispatch |
+| `acp/session-store.ts` | `sessions/store.ts` | Moved to its own `sessions/` directory |
+| `acp/agent-switch.ts` | `acp/process-manager.ts` | Merged into `AcpProcessManager.switchAgent()` |
+| `acp/slack-stream-controller.ts` | `slack-bot/stream-controller.ts` | Moved under `slack-bot/` |
+| (not in design) | `slack-bot/session-runtime.ts` | New file — the core orchestrator that the design split across multiple files |
+
 ## Directory Map
 
 ```
@@ -63,6 +87,7 @@ The app speaks JSON-RPC 2.0 over stdio to `kiro-cli acp`:
 - **Three-layer config** — `.env` (secrets, gitignored) → `app.json` (runtime, committed) → `channels.json` (routing, gitignored). Any `app.json` value overridable via env var
 - **channels.json is gitignored** — Contains workspace-specific Slack channel IDs. Copy from `channels.json.example`
 - **Transport recycling** — On `session/load` failure, the entire ACP child process is killed and respawned rather than attempting recovery
+- **Dual promise-chain locks** — `session-runtime.ts` uses two separate lock maps: `perSessionLocks` (serializes enqueue/processNext per Slack thread) and `perAcpEventLocks` (serializes ACP event handling per ACP session ID). No external mutex library
 - **Aspirational types** — `src/types/index.ts` contains interfaces for features not yet implemented (`SafeSummary`, `TriageResult`, `SessionMetric`, `SkillBenchmark`, etc.)
 
 ## Config Discovery
