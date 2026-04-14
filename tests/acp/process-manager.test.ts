@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AcpProcessManager } from '../../src/acp/process-manager';
+import { AcpProcessManager, classifySessionUpdateEvent } from '../../src/acp/process-manager';
 import type { AcpEvent } from '../../src/types';
 
 class FakeTransport {
@@ -52,6 +52,63 @@ class FakeTransport {
 }
 
 describe('AcpProcessManager', () => {
+  it('classifies tool_call and tool_call_update notifications using toolCallId', () => {
+    expect(classifySessionUpdateEvent({
+      sessionId: 'acp-1',
+      update: {
+        type: 'tool_call',
+        toolCallId: 'tool-1',
+        title: 'Read file',
+      },
+    })).toEqual({
+      sessionId: 'acp-1',
+      type: 'tool_start',
+      toolCallId: 'tool-1',
+      title: 'Read file',
+    });
+
+    expect(classifySessionUpdateEvent({
+      sessionId: 'acp-1',
+      update: {
+        type: 'tool_call_update',
+        toolCallId: 'tool-1',
+        title: 'Read src/config/app.json',
+        status: 'completed',
+      },
+    })).toEqual({
+      sessionId: 'acp-1',
+      type: 'tool_done',
+      toolCallId: 'tool-1',
+      title: 'Read src/config/app.json',
+      status: 'completed',
+    });
+  });
+
+  it('treats in-progress tool_call_update as a refined tool_start and ignores missing ids', () => {
+    expect(classifySessionUpdateEvent({
+      sessionId: 'acp-1',
+      update: {
+        type: 'tool_call_update',
+        toolCallId: 'tool-2',
+        title: 'Query Grafana dashboard',
+        status: 'running',
+      },
+    })).toEqual({
+      sessionId: 'acp-1',
+      type: 'tool_start',
+      toolCallId: 'tool-2',
+      title: 'Query Grafana dashboard',
+    });
+
+    expect(classifySessionUpdateEvent({
+      sessionId: 'acp-1',
+      update: {
+        type: 'tool_call',
+        title: 'Missing ID',
+      },
+    })).toBeNull();
+  });
+
   it('reuses the same ACP session for repeated lookups of the same Slack thread', async () => {
     const transport = new FakeTransport();
     const manager = new AcpProcessManager({ transport: transport as any });

@@ -225,11 +225,42 @@ export interface AcpPromptPayload {
   };
 }
 
-export interface AcpEvent {
-  sessionId: string;
-  type: 'started' | 'delta' | 'tool' | 'final' | 'error';
-  text?: string;
-  toolName?: string;
-  error?: string;
-  preserveBuffer?: boolean;
-}
+export type AcpEvent =
+  | {
+    sessionId: string;
+    type: 'started';
+  }
+  | {
+    sessionId: string;
+    type: 'delta';
+    text?: string;
+  }
+  | {
+    sessionId: string;
+    type: 'final';
+    text?: string;
+    preserveBuffer?: boolean;
+  }
+  | {
+    sessionId: string;
+    type: 'error';
+    error?: string;
+  }
+  | {
+    sessionId: string;
+    type: 'tool';
+    toolName?: string;
+  }
+  | {
+    sessionId: string;
+    type: 'tool_start';
+    toolCallId: string;
+    title: string;
+  }
+  | {
+    sessionId: string;
+    type: 'tool_done';
+    toolCallId: string;
+    title: string;
+    status: 'completed' | 'failed';
+  };
