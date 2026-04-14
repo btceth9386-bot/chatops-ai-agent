@@ -87,6 +87,94 @@ function collectText(value: unknown): string {
   return nestedKeys.map((key) => collectText(record[key])).filter(Boolean).join('');
 }
 
+function extractToolCallId(update: Record<string, unknown>): string | undefined {
+  return asString(update.toolCallId)
+    ?? asString(asRecord(update.toolCall)?.id)
+    ?? asString(asRecord(update.tool)?.id);
+}
+
+function extractToolTitle(update: Record<string, unknown>): string {
+  return asString(update.title)
+    ?? asString(update.name)
+    ?? asString(asRecord(update.toolCall)?.title)
+    ?? asString(asRecord(update.tool)?.title)
+    ?? asString(asRecord(update.tool)?.name)
+    ?? '';
+}
+
+export function classifySessionUpdateEvent(params: unknown): AcpEvent | null {
+  const root = asRecord(params);
+  const sessionId = asString(root?.sessionId) ?? 'unknown';
+  const update = asRecord(root?.update);
+  if (!update) {
+    return null;
+  }
+
+  const updateType = asString(update.sessionUpdate) ?? asString(update.type) ?? asString(update.kind);
+  const content = update.content;
+  const text = collectText(content) || collectText(update);
+
+  if (
+    updateType === 'agent_message_chunk' ||
+    updateType === 'agent_thought_chunk' ||
+    updateType === 'user_message_chunk' ||
+    updateType === 'AgentMessageChunk'
+  ) {
+    return text ? { sessionId, type: 'delta', text } : null;
+  }
+
+  if (updateType === 'tool_call' || updateType === 'ToolCall') {
+    const toolCallId = extractToolCallId(update);
+    if (!toolCallId) {
+      return null;
+    }
+
+    return {
+      sessionId,
+      type: 'tool_start',
+      toolCallId,
+      title: extractToolTitle(update),
+    };
+  }
+
+  if (updateType === 'tool_call_update' || updateType === 'ToolCallUpdate') {
+    const toolCallId = extractToolCallId(update);
+    if (!toolCallId) {
+      return null;
+    }
+
+    const title = extractToolTitle(update);
+    const status = asString(update.status);
+    if (status === 'completed' || status === 'failed') {
+      return {
+        sessionId,
+        type: 'tool_done',
+        toolCallId,
+        title,
+        status,
+      };
+    }
+
+    return {
+      sessionId,
+      type: 'tool_start',
+      toolCallId,
+      title,
+    };
+  }
+
+  if (
+    updateType === 'current_mode_update' ||
+    updateType === 'available_commands_update' ||
+    updateType === 'config_option_update' ||
+    updateType === 'TurnEnd'
+  ) {
+    return null;
+  }
+
+  return text ? { sessionId, type: 'delta', text } : null;
+}
+
 class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
   private child: ChildProcessWithoutNullStreams | undefined;
   private buffer = '';
@@ -446,38 +534,24 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
       updateType,
       textLength: text.length,
     });
+    const event = classifySessionUpdateEvent(params);
+    if (!event) {
+      return;
+    }
 
-    if (
-      updateType === 'agent_message_chunk' ||
-      updateType === 'agent_thought_chunk' ||
-      updateType === 'user_message_chunk' ||
-      updateType === 'AgentMessageChunk'
-    ) {
-      if (text) {
-        this.emitAcpEvent({ sessionId, type: 'delta', text });
+    if (event.type === 'tool_start' || event.type === 'tool_done') {
+      log.debug(event.type, {
+        sessionId,
+        toolCallId: event.toolCallId,
+        title: event.title,
+        ...(event.type === 'tool_done' ? { status: event.status } : {}),
+      });
+      if (event.type === 'tool_start') {
+        this.emitAcpEvent({ sessionId, type: 'tool', toolName: event.title });
       }
-      return;
     }
 
-    if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      const toolName = asString(update.title) ?? asString(update.name) ?? '';
-      log.debug('tool_call', { sessionId, tool: toolName });
-      this.emitAcpEvent({ sessionId, type: 'tool', toolName });
-      return;
-    }
-
-    if (
-      updateType === 'current_mode_update' ||
-      updateType === 'available_commands_update' ||
-      updateType === 'config_option_update' ||
-      updateType === 'TurnEnd'
-    ) {
-      return;
-    }
-
-    if (text) {
-      this.emitAcpEvent({ sessionId, type: 'delta', text });
-    }
+    this.emitAcpEvent(event);
   }
 
   private async sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {

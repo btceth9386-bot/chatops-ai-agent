@@ -277,6 +277,54 @@ describe('SlackSessionRuntime', () => {
     expect(stream.failures).toContain('boom');
   });
 
+  it('renders tool lines above streaming text and dedupes updates by toolCallId', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('investigate'), channel, 'prompt');
+
+    acpManager.emit({ sessionId: 'acp-1', type: 'tool_start', toolCallId: 'tool-1', title: 'Query Grafana' });
+    acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'Looking into it' });
+    acpManager.emit({ sessionId: 'acp-1', type: 'tool_start', toolCallId: 'tool-1', title: 'Query Grafana dashboard' });
+    acpManager.emit({ sessionId: 'acp-1', type: 'tool_done', toolCallId: 'tool-1', title: '', status: 'completed' });
+    acpManager.emit({ sessionId: 'acp-1', type: 'final', text: ' now' });
+
+    await flush();
+
+    expect(stream.updates).toContain("🔧 `Query Grafana`...");
+    expect(stream.updates).toContain("🔧 `Query Grafana`...\n\nLooking into it");
+    expect(stream.updates).toContain("🔧 `Query Grafana dashboard`...\n\nLooking into it");
+    expect(stream.updates).toContain("✅ `Query Grafana dashboard`\n\nLooking into it");
+    expect(stream.updates).toContain("FINAL:✅ `Query Grafana dashboard`\n\nLooking into it now");
+  });
+
+  it('renders failed tools and sanitizes multiline titles', async () => {
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('investigate'), channel, 'prompt');
+
+    acpManager.emit({
+      sessionId: 'acp-1',
+      type: 'tool_done',
+      toolCallId: 'tool-2',
+      title: "cat `file`\nerror",
+      status: 'failed',
+    });
+    acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'done' });
+
+    await flush();
+
+    expect(stream.updates).toContain("❌ `cat 'file' ; error`");
+    expect(stream.updates).toContain("FINAL:❌ `cat 'file' ; error`\n\ndone");
+  });
+
   it('logs whether lookup used memory or GSI fallback', async () => {
     const acpManager = new FakeAcpManager();
     const store = new InMemorySessionStore();

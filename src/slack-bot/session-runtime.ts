@@ -9,6 +9,12 @@ import { SlackReactionController } from './reactions';
 
 const log = createLogger('session-runtime');
 
+type ToolEntry = {
+  id: string;
+  title: string;
+  state: 'running' | 'completed' | 'failed';
+};
+
 function buildSessionKey(channelId: string, threadTs: string): string {
   return `THREAD#${channelId}:${threadTs}`;
 }
@@ -17,9 +23,33 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function sanitizeToolTitle(title: string): string {
+  return title.replace(/\n/g, ' ; ').replace(/`/g, "'");
+}
+
+function renderToolLine(entry: ToolEntry): string {
+  const icon = entry.state === 'running' ? '🔧' : entry.state === 'completed' ? '✅' : '❌';
+  const suffix = entry.state === 'running' ? '...' : '';
+  return `${icon} \`${sanitizeToolTitle(entry.title)}\`${suffix}`;
+}
+
+function composeDisplay(toolEntries: ToolEntry[], textBuffer: string): string {
+  const toolLines = toolEntries.map((entry) => renderToolLine(entry)).join('\n');
+  if (!toolLines) {
+    return textBuffer;
+  }
+
+  if (!textBuffer) {
+    return toolLines;
+  }
+
+  return `${toolLines}\n\n${textBuffer}`;
+}
+
 export class SlackSessionRuntime {
   private readonly sessionTargets = new Map<string, ChannelConfig & { threadTs: string }>();
   private readonly sessionBuffers = new Map<string, string>();
+  private readonly sessionToolEntries = new Map<string, ToolEntry[]>();
   private readonly acpSessionIndex = new Map<string, string>();
   private readonly perSessionLocks = new Map<string, Promise<void>>();
   private readonly perAcpEventLocks = new Map<string, Promise<void>>();
@@ -155,6 +185,7 @@ export class SlackSessionRuntime {
 
     const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
     this.sessionBuffers.set(acpSessionId, '');
+    this.sessionToolEntries.set(acpSessionId, []);
     this.acpSessionIndex.set(acpSessionId, sessionKey);
 
     const sessionNotice = ensureResult.fallbackFromLoad
@@ -203,8 +234,8 @@ export class SlackSessionRuntime {
       log.debug('handleAcpEvent received', {
         sessionId: event.sessionId,
         type: event.type,
-        hasText: Boolean(event.text),
-        hasError: Boolean(event.error),
+        hasText: 'text' in event && Boolean(event.text),
+        hasError: 'error' in event && Boolean(event.error),
       });
 
       const state = await this.findStateByAcpSessionId(event.sessionId);
@@ -230,7 +261,28 @@ export class SlackSessionRuntime {
         this.fireAndForgetReaction(state.sessionKey, 'setThinking', () => this.getActiveReactionController(state.sessionKey)?.setThinking() ?? Promise.resolve());
         const nextBuffer = `${this.sessionBuffers.get(event.sessionId) ?? ''}${event.text ?? ''}`;
         this.sessionBuffers.set(event.sessionId, nextBuffer);
-        await this.streamController.pushDelta(target, state.statusMessageTs, nextBuffer);
+        const displayText = composeDisplay(this.sessionToolEntries.get(event.sessionId) ?? [], nextBuffer);
+        await this.streamController.pushDelta(target, state.statusMessageTs, displayText);
+        return;
+      }
+
+      if (event.type === 'tool_start') {
+        const nextEntries = this.upsertToolEntry(event.sessionId, event.toolCallId, event.title, 'running');
+        await this.streamController.pushDelta(
+          target,
+          state.statusMessageTs,
+          composeDisplay(nextEntries, this.sessionBuffers.get(event.sessionId) ?? '')
+        );
+        return;
+      }
+
+      if (event.type === 'tool_done') {
+        const nextEntries = this.upsertToolEntry(event.sessionId, event.toolCallId, event.title, event.status);
+        await this.streamController.pushDelta(
+          target,
+          state.statusMessageTs,
+          composeDisplay(nextEntries, this.sessionBuffers.get(event.sessionId) ?? '')
+        );
         return;
       }
 
@@ -244,7 +296,8 @@ export class SlackSessionRuntime {
       if (event.type === 'final') {
         const bufferedText = this.sessionBuffers.get(event.sessionId) ?? '';
         const finalText = event.preserveBuffer ? bufferedText : `${bufferedText}${event.text ?? ''}`;
-        const decoratedFinalText = state.sessionNotice ? `${state.sessionNotice}\n\n${finalText}` : finalText;
+        const displayText = composeDisplay(this.sessionToolEntries.get(event.sessionId) ?? [], finalText);
+        const decoratedFinalText = state.sessionNotice ? `${state.sessionNotice}\n\n${displayText}` : displayText;
         log.debug('handleAcpEvent final', {
           sessionId: event.sessionId,
           preserveBuffer: Boolean(event.preserveBuffer),
@@ -273,6 +326,7 @@ export class SlackSessionRuntime {
     };
 
     this.sessionBuffers.delete(state.acpSessionId);
+    this.sessionToolEntries.delete(state.acpSessionId);
     this.activeReactionKeys.delete(state.sessionKey);
     if (activeReactionKey) {
       this.reactionControllers.delete(activeReactionKey);
@@ -321,6 +375,34 @@ export class SlackSessionRuntime {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  private upsertToolEntry(
+    acpSessionId: string,
+    toolCallId: string,
+    title: string,
+    state: ToolEntry['state']
+  ): ToolEntry[] {
+    const entries = [...(this.sessionToolEntries.get(acpSessionId) ?? [])];
+    const existingIndex = entries.findIndex((entry) => entry.id === toolCallId);
+    const nextTitle = title || entries[existingIndex]?.title || '';
+
+    if (existingIndex === -1) {
+      entries.push({
+        id: toolCallId,
+        title: nextTitle,
+        state,
+      });
+    } else {
+      entries[existingIndex] = {
+        ...entries[existingIndex],
+        title: nextTitle,
+        state,
+      };
+    }
+
+    this.sessionToolEntries.set(acpSessionId, entries);
+    return entries;
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {
