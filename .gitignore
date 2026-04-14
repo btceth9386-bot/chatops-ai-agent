@@ -5,3 +5,14 @@ dist/
 coverage/
 .kiro/settings/mcp.json
 src/config/channels.json
+
+# Injected by dispatcher — must not be committed
+ISSUE.md
+
+# Agent session dirs (keep specs, ignore runtime session data)
+.kiro/*
+!.kiro/specs/
+.claude/
+.codex/
+.copilot/
+.gemini/
