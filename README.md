@@ -14,6 +14,7 @@ Phase 1 foundation for a Slack + ACP based ChatOps bot.
 - Session store / recovery with DynamoDB when `DYNAMODB_TABLE_NAME` is set, plus in-memory fallback for local/dev
 - Per-session FIFO queueing with inflight lock semantics
 - Slack placeholder + streaming update controller
+- Slack reaction status indicators on the original user message
 - End-to-end handling for normal ACP prompts and `escalate` / `architect` requests in the same session
 - Agent switching: escalate to architect, de-escalate back to senior, with session state persistence
 - `@bot status` command to show current agent, model, and session ID in-thread
@@ -42,6 +43,8 @@ Three layers:
 
 Any value in `app.json` can be overridden by setting the corresponding environment variable (see `.env.example` for the full list).
 
+Reaction status is configured under `reactions` in `src/config/app.json`. By default the bot marks the original user message as queued, switches to thinking or tool-specific emoji while ACP is active, shows done or error briefly, and then clears the final reaction.
+
 ## Slack app setup
 
 1. Go to https://api.slack.com/apps
@@ -61,6 +64,7 @@ Any value in `app.json` can be overridden by setting the corresponding environme
    - `im:read`
    - `mpim:history`
    - `mpim:read`
+   - `reactions:write`
 8. Install the app to the workspace
 9. Copy the Bot User OAuth Token (`xoxb-...`)
 10. Put values into your shell environment or `.env`

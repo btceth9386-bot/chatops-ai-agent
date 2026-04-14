@@ -1,9 +1,11 @@
-import type { AcpEvent, AgentName, ChannelConfig, SessionRequest, SessionState, SlackEvent } from '../types';
+import type { AcpEvent, AgentName, ChannelConfig, ReactionsConfig, SessionRequest, SessionState, SlackEvent } from '../types';
 import type { AcpProcessManager } from '../acp/process-manager';
 import type { SessionStore } from '../sessions/store';
 import type { CloudWatchLogger } from '../logging/cloudwatch';
 import type { SlackStreamController } from './stream-controller';
+import type { SlackReactionClientLike } from './reactions';
 import { createLogger } from '../logging/logger';
+import { SlackReactionController } from './reactions';
 
 const log = createLogger('session-runtime');
 
@@ -21,12 +23,16 @@ export class SlackSessionRuntime {
   private readonly acpSessionIndex = new Map<string, string>();
   private readonly perSessionLocks = new Map<string, Promise<void>>();
   private readonly perAcpEventLocks = new Map<string, Promise<void>>();
+  private readonly activeReactionKeys = new Map<string, string>();
+  private readonly reactionControllers = new Map<string, SlackReactionController>();
 
   constructor(
     private readonly acpManager: AcpProcessManager,
     private readonly sessionStore: SessionStore,
     private readonly streamController: SlackStreamController,
-    private readonly logger: CloudWatchLogger
+    private readonly logger: CloudWatchLogger,
+    private readonly reactionClient?: SlackReactionClientLike,
+    private readonly reactionsConfig?: ReactionsConfig
   ) {
     this.acpManager.onEvent((event) => {
       void this.handleAcpEvent(event);
@@ -74,6 +80,10 @@ export class SlackSessionRuntime {
       existing.lastUpdatedAt = isoNow();
       await this.sessionStore.put(existing);
       this.sessionTargets.set(sessionKey, { ...channel, threadTs: event.threadTs });
+      const reactionController = this.getReactionController(sessionKey, request);
+      if (reactionController) {
+        this.fireAndForgetReaction(sessionKey, 'setQueued', () => reactionController.setQueued());
+      }
 
       if (!existing.inflight) {
         await this.processNext(sessionKey);
@@ -88,11 +98,13 @@ export class SlackSessionRuntime {
     }
 
     const next = state.queue[0];
+    const requestReactionKey = this.buildReactionKey(sessionKey, next.timestamp);
     const target = this.sessionTargets.get(sessionKey) ?? {
       channelId: next.channelId,
       threadTs: next.threadTs,
       responseMode: state.responseMode,
     };
+    this.activeReactionKeys.set(sessionKey, requestReactionKey);
 
     const isModeSwitch = next.kind === 'escalation' || next.kind === 'de_escalation';
     const targetAgent: AgentName = next.kind === 'escalation' ? 'architect-agent' : next.kind === 'de_escalation' ? 'senior-agent' : state.activeAgent || 'senior-agent';
@@ -128,6 +140,7 @@ export class SlackSessionRuntime {
       const modeName = targetAgent === 'architect-agent' ? 'architect' : 'senior';
       const statusMessageTs = await this.streamController.ensurePlaceholder(target, state.statusMessageTs);
       await this.streamController.complete(target, statusMessageTs, `🔀 Switched to *${modeName}* mode.`);
+      this.fireAndForgetReaction(sessionKey, 'setDone', () => this.getActiveReactionController(sessionKey)?.setDone() ?? Promise.resolve());
       const updatedState: SessionState = {
         ...state,
         acpSessionId,
@@ -208,7 +221,13 @@ export class SlackSessionRuntime {
         return;
       }
 
+      if (event.type === 'tool') {
+        this.fireAndForgetReaction(state.sessionKey, 'setTool', () => this.getActiveReactionController(state.sessionKey)?.setTool(event.toolName ?? '') ?? Promise.resolve());
+        return;
+      }
+
       if (event.type === 'delta') {
+        this.fireAndForgetReaction(state.sessionKey, 'setThinking', () => this.getActiveReactionController(state.sessionKey)?.setThinking() ?? Promise.resolve());
         const nextBuffer = `${this.sessionBuffers.get(event.sessionId) ?? ''}${event.text ?? ''}`;
         this.sessionBuffers.set(event.sessionId, nextBuffer);
         await this.streamController.pushDelta(target, state.statusMessageTs, nextBuffer);
@@ -216,6 +235,7 @@ export class SlackSessionRuntime {
       }
 
       if (event.type === 'error') {
+        this.fireAndForgetReaction(state.sessionKey, 'setError', () => this.getActiveReactionController(state.sessionKey)?.setError() ?? Promise.resolve());
         await this.streamController.fail(target, state.statusMessageTs, event.error ?? 'Unknown ACP error');
         await this.finishCurrent(state, false);
         return;
@@ -233,6 +253,7 @@ export class SlackSessionRuntime {
           finalLength: finalText.length,
           hasSessionNotice: Boolean(state.sessionNotice),
         });
+        this.fireAndForgetReaction(state.sessionKey, 'setDone', () => this.getActiveReactionController(state.sessionKey)?.setDone() ?? Promise.resolve());
         await this.streamController.complete(target, state.statusMessageTs, decoratedFinalText);
         await this.finishCurrent(state, true);
       }
@@ -241,6 +262,7 @@ export class SlackSessionRuntime {
 
   private async finishCurrent(state: SessionState, preserveAgent: boolean): Promise<void> {
     const [, ...remaining] = state.queue;
+    const activeReactionKey = this.activeReactionKeys.get(state.sessionKey);
     const nextState: SessionState = {
       ...state,
       inflight: false,
@@ -251,8 +273,54 @@ export class SlackSessionRuntime {
     };
 
     this.sessionBuffers.delete(state.acpSessionId);
+    this.activeReactionKeys.delete(state.sessionKey);
+    if (activeReactionKey) {
+      this.reactionControllers.delete(activeReactionKey);
+    }
     await this.sessionStore.put(nextState);
     await this.processNext(state.sessionKey);
+  }
+
+  private buildReactionKey(sessionKey: string, timestamp: string): string {
+    return `${sessionKey}:${timestamp}`;
+  }
+
+  private getReactionController(sessionKey: string, request: SessionRequest): SlackReactionController | null {
+    if (!this.reactionClient || !this.reactionsConfig?.enabled) {
+      return null;
+    }
+
+    const key = this.buildReactionKey(sessionKey, request.timestamp);
+    const existing = this.reactionControllers.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const controller = new SlackReactionController(this.reactionClient, {
+      channelId: request.channelId,
+      messageTs: request.timestamp,
+    }, this.reactionsConfig);
+    this.reactionControllers.set(key, controller);
+    return controller;
+  }
+
+  private getActiveReactionController(sessionKey: string): SlackReactionController | null {
+    const reactionKey = this.activeReactionKeys.get(sessionKey);
+    if (!reactionKey) {
+      return null;
+    }
+
+    return this.reactionControllers.get(reactionKey) ?? null;
+  }
+
+  private fireAndForgetReaction(sessionKey: string, action: string, work: () => Promise<void>): void {
+    void work().catch((error) => {
+      log.warn('reaction update failed', {
+        sessionKey,
+        action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async findStateByAcpSessionId(acpSessionId: string): Promise<SessionState | null> {

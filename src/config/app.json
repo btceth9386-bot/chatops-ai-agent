@@ -12,5 +12,27 @@
     "dynamoTableName": "slack-kiro-sessions"
   },
   "acpCommand": "kiro-cli acp",
-  "acpDefaultAgent": ""
+  "acpDefaultAgent": "",
+  "reactions": {
+    "enabled": true,
+    "removeAfterReply": true,
+    "emojis": {
+      "queued": "eyes",
+      "thinking": "brain",
+      "tool": "wrench",
+      "coding": "technologist",
+      "web": "globe_with_meridians",
+      "done": "white_check_mark",
+      "error": "x",
+      "stallSoft": "hourglass_flowing_sand",
+      "stallHard": "turtle"
+    },
+    "timing": {
+      "debounceMs": 700,
+      "stallSoftMs": 10000,
+      "stallHardMs": 30000,
+      "doneHoldMs": 1500,
+      "errorHoldMs": 2500
+    }
+  }
 }

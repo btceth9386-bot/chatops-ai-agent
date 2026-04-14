@@ -31,6 +31,33 @@ export interface SlackEvent {
   timestamp: string;
 }
 
+export interface ReactionEmojis {
+  queued: string;
+  thinking: string;
+  tool: string;
+  coding: string;
+  web: string;
+  done: string;
+  error: string;
+  stallSoft: string;
+  stallHard: string;
+}
+
+export interface ReactionTiming {
+  debounceMs: number;
+  stallSoftMs: number;
+  stallHardMs: number;
+  doneHoldMs: number;
+  errorHoldMs: number;
+}
+
+export interface ReactionsConfig {
+  enabled: boolean;
+  removeAfterReply: boolean;
+  emojis: ReactionEmojis;
+  timing: ReactionTiming;
+}
+
 export interface SanitizedInput {
   text: string;
   wasTruncated: boolean;
@@ -200,8 +227,9 @@ export interface AcpPromptPayload {
 
 export interface AcpEvent {
   sessionId: string;
-  type: 'started' | 'delta' | 'final' | 'error';
+  type: 'started' | 'delta' | 'tool' | 'final' | 'error';
   text?: string;
+  toolName?: string;
   error?: string;
   preserveBuffer?: boolean;
 }
