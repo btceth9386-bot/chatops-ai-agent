@@ -460,7 +460,9 @@ class JsonRpcAcpTransport extends EventEmitter implements AcpTransport {
     }
 
     if (updateType === 'tool_call' || updateType === 'ToolCall') {
-      log.debug('tool_call', { sessionId, tool: asString(update.title) ?? asString(update.name) });
+      const toolName = asString(update.title) ?? asString(update.name) ?? '';
+      log.debug('tool_call', { sessionId, tool: toolName });
+      this.emitAcpEvent({ sessionId, type: 'tool', toolName });
       return;
     }
 

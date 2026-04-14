@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SlackSessionRuntime } from '../../src/slack-bot/session-runtime';
 import { InMemorySessionStore } from '../../src/sessions/store';
-import type { AcpEvent, AcpPromptPayload, SlackEvent } from '../../src/types';
+import type { AcpEvent, AcpPromptPayload, ReactionsConfig, SlackEvent } from '../../src/types';
 
 class FakeAcpManager {
   private readonly listeners = new Set<(event: AcpEvent) => void>();
@@ -75,6 +75,22 @@ class FakeStreamController {
   }
 }
 
+class FakeReactionClient {
+  public readonly adds: Array<Record<string, unknown>> = [];
+  public readonly removes: Array<Record<string, unknown>> = [];
+
+  reactions = {
+    add: vi.fn(async (args: Record<string, unknown>) => {
+      this.adds.push(args);
+      return {};
+    }),
+    remove: vi.fn(async (args: Record<string, unknown>) => {
+      this.removes.push(args);
+      return {};
+    }),
+  };
+}
+
 const logger = {
   logInfo: vi.fn().mockResolvedValue(undefined),
   logWarn: vi.fn().mockResolvedValue(undefined),
@@ -94,6 +110,39 @@ function event(messageText: string): SlackEvent {
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+async function flushMicrotasks(count = 6): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve();
+  }
+}
+
+const reactionsConfig: ReactionsConfig = {
+  enabled: true,
+  removeAfterReply: true,
+  emojis: {
+    queued: 'eyes',
+    thinking: 'brain',
+    tool: 'wrench',
+    coding: 'technologist',
+    web: 'globe_with_meridians',
+    done: 'white_check_mark',
+    error: 'x',
+    stallSoft: 'hourglass_flowing_sand',
+    stallHard: 'turtle',
+  },
+  timing: {
+    debounceMs: 5,
+    stallSoftMs: 50,
+    stallHardMs: 100,
+    doneHoldMs: 10,
+    errorHoldMs: 10,
+  },
+};
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('SlackSessionRuntime', () => {
   it('queues prompt then escalation in the same session and preserves ACP session id', async () => {
@@ -267,5 +316,39 @@ describe('SlackSessionRuntime', () => {
 
     expect(stream.updates).toContain('hi ');
     expect(stream.updates).toContain('FINAL:hi there');
+  });
+
+  it('updates reactions across queued, tool, thinking, and done states', async () => {
+    vi.useFakeTimers();
+    const acpManager = new FakeAcpManager();
+    const store = new InMemorySessionStore();
+    const stream = new FakeStreamController();
+    const reactions = new FakeReactionClient();
+    const runtime = new SlackSessionRuntime(acpManager as any, store, stream as any, logger, reactions as any, reactionsConfig);
+    const channel = { channelId: 'C1', mode: 'auto_investigation', responseMode: 'thread_reply' } as const;
+
+    await runtime.enqueue(event('check the web'), channel, 'prompt');
+    await flushMicrotasks();
+
+    expect(reactions.adds[0]).toMatchObject({
+      channel: 'C1',
+      timestamp: '123.456',
+      name: 'eyes',
+    });
+
+    acpManager.emit({ sessionId: 'acp-1', type: 'tool', toolName: 'web_search' });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(reactions.adds.at(-1)).toMatchObject({ name: 'globe_with_meridians' });
+
+    acpManager.emit({ sessionId: 'acp-1', type: 'delta', text: 'partial ' });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(reactions.adds.at(-1)).toMatchObject({ name: 'brain' });
+
+    acpManager.emit({ sessionId: 'acp-1', type: 'final', text: 'done' });
+    await flushMicrotasks(10);
+    expect(reactions.adds.at(-1)).toMatchObject({ name: 'white_check_mark' });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(reactions.removes.at(-1)).toMatchObject({ name: 'white_check_mark' });
   });
 });

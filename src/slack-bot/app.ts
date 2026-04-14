@@ -85,7 +85,7 @@ export async function createSlackApp() {
     : appConfig.acpCommand;
   const acpManager = new AcpProcessManager({ command: acpCommand });
   const streamController = new SlackStreamController(app.client as any);
-  const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger);
+  const runtime = new SlackSessionRuntime(acpManager, sessionStore, streamController, logger, app.client as any, appConfig.reactions);
 
   let cleanedUp = false;
   const cleanup = (reason: string) => {
